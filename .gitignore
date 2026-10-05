@@ -1,10 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
-server/prisma/dev.db
-server/prisma/dev.db-journal
-server/test.db
-server/test.db-journal
+
+*.db
+*.db-journal
+
 .env
 
 server/uploads/
