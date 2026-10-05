@@ -8,9 +8,10 @@ interface Props {
   state: TournamentStateDTO;
   matchId: string;
   onSaved: () => void;
+  editing?: boolean;
 }
 
-export default function ResultEntry({ state, matchId, onSaved }: Props) {
+export default function ResultEntry({ state, matchId, onSaved, editing = false }: Props) {
   const match = state.matches.find((m) => m.id === matchId);
   const [winner, setWinner] = useState<string | null>(null);
   const [aDmg, setADmg] = useState('');
@@ -19,11 +20,11 @@ export default function ResultEntry({ state, matchId, onSaved }: Props) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setWinner(null);
-    setADmg('');
-    setBDmg('');
+    setWinner(editing ? match?.result?.winnerUnitId ?? null : null);
+    setADmg(editing && match?.result ? String(match.result.aDamageDealt) : '');
+    setBDmg(editing && match?.result ? String(match.result.bDamageDealt) : '');
     setError(null);
-  }, [matchId]);
+  }, [matchId, editing, match?.result?.winnerUnitId, match?.result?.aDamageDealt, match?.result?.bDamageDealt]);
 
   if (!match) return null;
   const a = match.aUnitId;
@@ -48,7 +49,9 @@ export default function ResultEntry({ state, matchId, onSaved }: Props) {
     }
     setSaving(true);
     try {
-      await api.saveResult(state.id, matchId, { winnerUnitId: winner, aDamageDealt: av, bDamageDealt: bv });
+      const body = { winnerUnitId: winner, aDamageDealt: av, bDamageDealt: bv };
+      if (editing) await api.editResult(state.id, matchId, body);
+      else await api.saveResult(state.id, matchId, body);
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen');
@@ -107,7 +110,7 @@ export default function ResultEntry({ state, matchId, onSaved }: Props) {
       {error && <div className="rounded-lg bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-400">{error}</div>}
 
       <button onClick={() => void save()} disabled={saving} className="btn-primary w-full py-3 text-base">
-        {saving ? 'Wird gespeichert…' : 'ERGEBNIS SPEICHERN'}
+        {saving ? 'Wird gespeichert…' : editing ? 'KORRIGIERTES ERGEBNIS SPEICHERN' : 'ERGEBNIS SPEICHERN'}
       </button>
     </div>
   );

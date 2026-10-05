@@ -48,8 +48,11 @@ export default function MatchList({ state, onSelectCurrent, onEdit, selectedMatc
                         {m.status}
                       </span>
                     </div>
-                    <div className="truncate text-sm font-semibold">
-                      {unitName(state, m.aUnitId)} gegen {unitName(state, m.bUnitId)}
+                    <div className="flex flex-wrap items-center gap-2 truncate text-sm font-semibold">
+                      {m.aUnitId && state.units.find((unit) => unit.id === m.aUnitId)?.members.map((member) => member.imageUrl && <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-6 w-6 rounded-full object-cover" />)}
+                      {unitName(state, m.aUnitId)} gegen
+                      {m.bUnitId && state.units.find((unit) => unit.id === m.bUnitId)?.members.map((member) => member.imageUrl && <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-6 w-6 rounded-full object-cover" />)}
+                      {unitName(state, m.bUnitId)}
                     </div>
                     {m.result && (
                       <div className="text-xs text-slate-400 table-cell-num">
@@ -59,21 +62,21 @@ export default function MatchList({ state, onSelectCurrent, onEdit, selectedMatc
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1.5">
-                    {onEdit && m.status !== 'finished' && m.aUnitId && m.bUnitId && (
+                    {onEdit && m.aUnitId && m.bUnitId && (
                       <button
                         onClick={() => onEdit(m.id)}
                         className={`btn-ghost px-2 py-1 text-xs ${m.id === editingMatchId ? 'bg-emerald-500/20 text-emerald-300' : ''}`}
                       >
-                        Ergebnis eingeben
+                        {m.status === 'finished' ? 'ERGEBNIS BEARBEITEN' : 'Ergebnis eingeben'}
                       </button>
                     )}
-                    {onSelectCurrent && (
+                    {onSelectCurrent && m.status !== 'finished' && m.aUnitId && m.bUnitId && (
                       <button
                         onClick={() => onSelectCurrent(m.id)}
-                        className="btn-ghost px-2 py-1 text-xs"
-                        title="Als aktuelles Spiel setzen (auf dem Overlay sichtbar)"
+                        className="btn-primary px-2 py-1 text-xs"
+                        title="Dieses kommende Spiel sofort aktivieren"
                       >
-                        Als Live setzen
+                        JETZT SPIELEN
                       </button>
                     )}
                   </div>

@@ -10,7 +10,9 @@ import type {
   TournamentState,
   TournamentStateDTO,
   UnitDTO,
+  PresentationDeckDTO,
 } from '@gt/shared';
+import { DEFAULT_PRESENTATION_DECKS } from '@gt/shared';
 import { computeStandings, formatInfo, type StandingRow, type UnitPlan } from '@gt/engine';
 import { prisma } from './db.js';
 
@@ -95,14 +97,29 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
   });
   if (!t) throw new ServiceError('Tournament not found', 404);
 
-  const units: UnitDTO[] = t.units.map((u) => ({
-    id: u.id,
-    kind: u.kind as UnitDTO['kind'],
-    name: u.name,
-    abbreviation: u.abbreviation,
-    country: u.country,
-    members: u.members.map((m) => ({ id: m.participantId, name: m.participant.name })),
-  }));
+  const units: UnitDTO[] = t.units.map((u) => {
+    const ownOpenMatches = t.matches.filter((match) => match.status !== 'finished' && (match.aUnitId === u.id || match.bUnitId === u.id));
+    const ownNextMatch = ownOpenMatches.find((match) => match.status === 'live') ?? [...ownOpenMatches].sort((a, b) => {
+      const order = (match: typeof a) => (match.stage === 'PRELIMINARY' ? 0 : match.stage === 'SEMIFINALS' ? 1 : 2) * 10000 + match.orderInStage;
+      return order(a) - order(b);
+    })[0];
+    const readinessIsCurrent = Boolean(ownNextMatch && u.readinessMatchId === ownNextMatch.id);
+    return {
+      id: u.id,
+      kind: u.kind as UnitDTO['kind'],
+      name: u.name,
+      abbreviation: u.abbreviation,
+      country: u.country,
+      members: u.members.map((m) => ({ id: m.participantId, name: m.participant.name, imageUrl: m.participant.imagePath ? `/api/uploads/${m.participant.imagePath}` : null })),
+      readiness: (readinessIsCurrent ? u.readiness : 'waiting') as UnitDTO['readiness'],
+      readinessMatchId: readinessIsCurrent ? u.readinessMatchId : null,
+      problemReport: u.problemMessage && u.problemCreatedAt ? {
+        message: u.problemMessage,
+        createdAt: u.problemCreatedAt.toISOString(),
+        resolved: u.problemResolved,
+      } : null,
+    };
+  });
   const unitById = new Map(units.map((u) => [u.id, u]));
   const unitIds = units.map((u) => u.id);
   const meta = (uid: string) => {
@@ -251,6 +268,8 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
       nextOwnMatch: ownMatches.find((m) => m.status === 'live') ?? ownMatches.find((m) => m.status === 'waiting') ?? null,
       ownMatches,
       status,
+      readiness: unit.readiness,
+      problemReport: unit.problemReport,
       gamesBeforeNext,
     };
     return { view, matches: ownMatches };
@@ -267,6 +286,8 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
     nextOwnMatch: null,
     ownMatches: [],
     status: 'nothing_yet',
+    readiness: 'waiting',
+    problemReport: null,
     gamesBeforeNext: 0,
   };
 
@@ -285,6 +306,21 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
     standings,
     groupStandings,
     knockout,
+    presentation: {
+      active: t.presentationActive,
+      activeDeckId: t.presentationDeckId,
+      currentIndex: t.presentationIndex,
+      decks: (() => {
+        try {
+          const decks: unknown = JSON.parse(t.presentationSlides);
+          if (Array.isArray(decks) && decks.length && decks.every((deck) => deck && typeof deck.id === 'string' && typeof deck.title === 'string' && Array.isArray(deck.slides))) return decks as PresentationDeckDTO[];
+        } catch { /* use defaults for pre-migration or malformed legacy data */ }
+        return DEFAULT_PRESENTATION_DECKS;
+      })(),
+    },
+    resultScreen: t.resultScreenMatchId && t.resultScreenUntil && t.resultScreenUntil.getTime() > Date.now()
+      ? { matchId: t.resultScreenMatchId, until: t.resultScreenUntil.toISOString() }
+      : null,
     settings: {
       autoRotation: t.settings?.autoRotation ?? true,
       rotationIntervalSec: t.settings?.rotationIntervalSec ?? 30,
@@ -294,7 +330,7 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
       compact: t.settings?.compact ?? false,
       transparent: t.settings?.transparent ?? true,
       theme: (t.settings?.theme ?? 'dark') as 'dark' | 'light',
-      overlayMode: (t.settings?.overlayMode ?? 'auto') as 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match',
+      overlayMode: (t.settings?.overlayMode ?? 'auto') as TournamentStateDTO['settings']['overlayMode'],
     },
     currentMatchId: t.currentMatchId,
     seed: t.seed,

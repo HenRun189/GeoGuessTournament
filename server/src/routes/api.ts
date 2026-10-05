@@ -1,12 +1,13 @@
 // HTTP API routes for the tournament app.
 
 import { Router } from 'express';
-import type { PlayerViewDTO, TournamentState, OverlayOverrideDTO } from '@gt/shared';
+import type { PlayerViewDTO, TournamentState, OverlayOverrideDTO, PresentationDeckDTO } from '@gt/shared';
 import { addClient } from '../services/db.js';
 import { getTournamentState, ServiceError } from '../services/state.js';
 import {
   createTournament,
   saveResult,
+  editResult,
   undoLastResult,
   setTournamentState,
   resetTournament,
@@ -14,9 +15,18 @@ import {
   deleteDemoTournaments,
   setCurrentMatch,
   sendManualPing,
+  setReadiness,
+  reportProblem,
+  resolveProblem,
+  uploadParticipantImage,
+  removeParticipantImage,
   setPaused,
   updateOverlaySettings,
   setOverlayMode,
+  updatePresentationDecks,
+  selectPresentationDeck,
+  navigatePresentation,
+  setPresentationActive,
   createDemoTournament,
 } from '../services/mutations.js';
 import { prisma } from '../services/db.js';
@@ -158,6 +168,48 @@ api.post(
 );
 
 api.post(
+  '/tournaments/:id/units/:unitId/readiness',
+  handle(async (req) => {
+    const readiness = req.body?.readiness;
+    if (readiness !== 'ready' && readiness !== 'in_game') throw new ServiceError('Ungültiger Bereitschaftsstatus');
+    await setReadiness(req.params.id, req.params.unitId, readiness);
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/units/:unitId/problem',
+  handle(async (req) => {
+    await reportProblem(req.params.id, req.params.unitId, String(req.body?.message ?? ''));
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/units/:unitId/problem/resolve',
+  handle(async (req) => {
+    await resolveProblem(req.params.id, req.params.unitId);
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/participants/:participantId/image',
+  handle(async (req) => {
+    await uploadParticipantImage(req.params.id, req.params.participantId, req.body);
+    return { ok: true };
+  }),
+);
+
+api.delete(
+  '/tournaments/:id/participants/:participantId/image',
+  handle(async (req) => {
+    await removeParticipantImage(req.params.id, req.params.participantId);
+    return { ok: true };
+  }),
+);
+
+api.post(
   '/tournaments/:id/current-match',
   handle(async (req) => {
     await setCurrentMatch(req.params.id, req.body?.matchId ?? null);
@@ -169,6 +221,14 @@ api.post(
   '/tournaments/:id/matches/:matchId/result',
   handle(async (req) => {
     await saveResult(req.params.id, req.params.matchId, req.body);
+    return { ok: true };
+  }),
+);
+
+api.put(
+  '/tournaments/:id/matches/:matchId/result',
+  handle(async (req) => {
+    await editResult(req.params.id, req.params.matchId, req.body);
     return { ok: true };
   }),
 );
@@ -185,6 +245,40 @@ api.patch(
   '/tournaments/:id/overlay-settings',
   handle(async (req) => {
     await updateOverlaySettings(req.params.id, req.body ?? {});
+    return { ok: true };
+  }),
+);
+
+api.put(
+  '/tournaments/:id/presentation/decks',
+  handle(async (req) => {
+    await updatePresentationDecks(req.params.id, req.body?.decks as PresentationDeckDTO[]);
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/presentation/deck',
+  handle(async (req) => {
+    await selectPresentationDeck(req.params.id, String(req.body?.deckId ?? ''));
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/presentation/active',
+  handle(async (req) => {
+    await setPresentationActive(req.params.id, req.body?.active === true);
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/presentation/navigate',
+  handle(async (req) => {
+    const direction = req.body?.direction;
+    if (direction !== -1 && direction !== 1) throw new ServiceError('Ungültige Präsentationsrichtung');
+    await navigatePresentation(req.params.id, direction);
     return { ok: true };
   }),
 );

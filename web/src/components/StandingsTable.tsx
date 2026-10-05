@@ -1,6 +1,6 @@
 // Standings table used by admin, public page and overlay.
 
-import type { StandingRowDTO } from '@gt/shared';
+import type { StandingRowDTO, TournamentStateDTO } from '@gt/shared';
 
 interface Props {
   rows: StandingRowDTO[];
@@ -10,6 +10,7 @@ interface Props {
   highlightUnitId?: string | null;
   maxRows?: number;
   title?: string;
+  state?: TournamentStateDTO;
 }
 
 export function flagEmoji(country: string | null): string {
@@ -27,6 +28,7 @@ export default function StandingsTable({
   highlightUnitId,
   maxRows,
   title,
+  state,
 }: Props) {
   const visible = maxRows ? rows.slice(0, maxRows) : rows;
   return (
@@ -55,6 +57,9 @@ export default function StandingsTable({
               <td className="py-1.5 pr-2 font-semibold">
                 <span className="flex items-center gap-1.5">
                   {showFlags && r.country && <span>{flagEmoji(r.country)}</span>}
+                  {state?.units.find((unit) => unit.id === r.unitId)?.members.map((member) => member.imageUrl
+                    ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                    : <span key={member.id} aria-label={`Kein Profilbild für ${member.name}`} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[10px] font-bold text-emerald-300">{member.name.slice(0, 1).toUpperCase()}</span>)}
                   <span className="truncate">{r.name}</span>
                   {r.tied && <span className="text-[10px] font-bold text-amber-400">T</span>}
                 </span>

@@ -1,7 +1,7 @@
 // API client + live state hook (SSE with polling fallback).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PlayerViewDTO, TournamentStateDTO, TournamentSummaryDTO, ServerEvent, OverlaySettingsDTO, OverlayOverrideDTO } from '@gt/shared';
+import type { PlayerViewDTO, TournamentStateDTO, TournamentSummaryDTO, ServerEvent, OverlaySettingsDTO, OverlayOverrideDTO, PresentationDeckDTO } from '@gt/shared';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -20,19 +20,40 @@ export const api = {
   setState: (id: string, state: string) => request(`/tournaments/${id}/state`, { method: 'POST', body: JSON.stringify({ state }) }),
   reset: (id: string) => request(`/tournaments/${id}/reset`, { method: 'POST' }),
   deleteTournament: (id: string) => request(`/tournaments/${id}`, { method: 'DELETE' }),
+  setReadiness: (id: string, unitId: string, readiness: 'ready' | 'in_game') =>
+    request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/readiness`, { method: 'POST', body: JSON.stringify({ readiness }) }),
+  reportProblem: (id: string, unitId: string, message: string) =>
+    request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem`, { method: 'POST', body: JSON.stringify({ message }) }),
+  resolveProblem: (id: string, unitId: string) =>
+    request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem/resolve`, { method: 'POST' }),
+  uploadParticipantImage: (id: string, participantId: string, mimeType: string, dataBase64: string) =>
+    request(`/tournaments/${id}/participants/${encodeURIComponent(participantId)}/image`, { method: 'POST', body: JSON.stringify({ mimeType, dataBase64 }) }),
+  removeParticipantImage: (id: string, participantId: string) =>
+    request(`/tournaments/${id}/participants/${encodeURIComponent(participantId)}/image`, { method: 'DELETE' }),
   setCurrentMatch: (id: string, matchId: string | null) =>
     request(`/tournaments/${id}/current-match`, { method: 'POST', body: JSON.stringify({ matchId }) }),
   pingUnit: (id: string, unitId: string) =>
     request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/ping`, { method: 'POST' }),
   saveResult: (id: string, matchId: string, body: { winnerUnitId: string; aDamageDealt: number; bDamageDealt: number }) =>
     request(`/tournaments/${id}/matches/${matchId}/result`, { method: 'POST', body: JSON.stringify(body) }),
+  editResult: (id: string, matchId: string, body: { winnerUnitId: string; aDamageDealt: number; bDamageDealt: number }) =>
+    request(`/tournaments/${id}/matches/${matchId}/result`, { method: 'PUT', body: JSON.stringify(body) }),
   undo: (id: string) => request(`/tournaments/${id}/undo`, { method: 'POST' }),
   getPlayer: (id: string, playerId: string) => request<PlayerViewDTO>(`/tournaments/${id}/player/${playerId}`),
   updateOverlaySettings: (id: string, patch: Partial<OverlaySettingsDTO>) =>
     request(`/tournaments/${id}/overlay-settings`, { method: 'PATCH', body: JSON.stringify(patch) }),
   setOverlayMode: (id: string, mode: OverlayOverrideDTO['mode']) =>
     request(`/tournaments/${id}/overlay-mode`, { method: 'POST', body: JSON.stringify({ mode }) }),
+  updatePresentationDecks: (id: string, decks: PresentationDeckDTO[]) =>
+    request(`/tournaments/${id}/presentation/decks`, { method: 'PUT', body: JSON.stringify({ decks }) }),
+  selectPresentationDeck: (id: string, deckId: string) =>
+    request(`/tournaments/${id}/presentation/deck`, { method: 'POST', body: JSON.stringify({ deckId }) }),
+  setPresentationActive: (id: string, active: boolean) =>
+    request(`/tournaments/${id}/presentation/active`, { method: 'POST', body: JSON.stringify({ active }) }),
+  navigatePresentation: (id: string, direction: -1 | 1) =>
+    request(`/tournaments/${id}/presentation/navigate`, { method: 'POST', body: JSON.stringify({ direction }) }),
   createDemo: (kind: 'full' | 'team' | 'groups') => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind }) }),
+  playerImageUrl: (imageUrl: string | null) => imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(imageUrl)}` : null,
   deleteDemo: () => request<{ removed: number }>('/demo', { method: 'DELETE' }),
 };
 

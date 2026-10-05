@@ -19,6 +19,12 @@ model Tournament {
   seed             Int?     // matchup-generation seed for 7/9/11
   isDemo           Boolean  @default(false)
   paused           Boolean  @default(false)
+  presentationSlides String  @default("[]")
+  presentationActive Boolean @default(false)
+  presentationIndex Int     @default(0)
+  presentationDeckId String @default("tournament-intro")
+  resultScreenMatchId String?
+  resultScreenUntil DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -37,6 +43,7 @@ model Participant {
   name         String
   country      String?
   abbreviation String?
+  imagePath    String?
   tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   teams        TeamMember[]
 
@@ -51,6 +58,11 @@ model Unit {
   country      String?
   abbreviation String?
   teamId       String? // set when kind = team
+  readiness    String  @default("waiting") // waiting | ready | in_game
+  readinessMatchId String?
+  problemMessage String?
+  problemCreatedAt DateTime?
+  problemResolved Boolean @default(false)
   tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   members      TeamMember[]
   groups       GroupMembership[]
@@ -130,6 +142,6 @@ model TournamentSettings {
   compact             Boolean @default(false)
   transparent         Boolean @default(true)
   theme               String  @default("dark")
-  overlayMode         String  @default("auto") // auto | next_matches | table | bracket | current_match
+  overlayMode         String  @default("auto") // auto | next_matches | table | bracket | current_match | result_screen | presentation
   tournament          Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 }

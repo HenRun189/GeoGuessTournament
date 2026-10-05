@@ -1,0 +1,46 @@
+import { useEffect, useState } from 'react';
+import type { MatchDTO, TournamentStateDTO } from '@gt/shared';
+
+export function useResultScreenActive(until: string | null | undefined, matchId?: string | null): boolean {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!until) return;
+    const timeout = window.setTimeout(() => setNow(Date.now()), Math.max(0, Date.parse(until) - Date.now()));
+    return () => window.clearTimeout(timeout);
+  }, [until, matchId]);
+  return Boolean(until && Date.parse(until) > now);
+}
+
+export default function MatchSpotlight({ state, match }: { state: TournamentStateDTO; match: MatchDTO }) {
+  const result = match.result;
+  if (!result || !match.aUnitId || !match.bUnitId) return null;
+  const winnerId = result.winnerUnitId;
+  const winner = state.units.find((unit) => unit.id === winnerId);
+  const side = (unitId: string, damage: number, won: boolean) => {
+    const unit = state.units.find((entry) => entry.id === unitId);
+    return <div className={`flex min-w-0 flex-1 flex-col items-center rounded-2xl border p-4 sm:p-6 ${won ? 'border-amber-400/70 bg-amber-400/10 shadow-xl shadow-amber-950/30' : 'border-slate-700 bg-slate-950/70'}`}>
+      <div className="mb-3 flex -space-x-3">{unit?.members.map((member) => member.imageUrl
+        ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-14 w-14 rounded-full border-2 border-slate-900 object-cover sm:h-20 sm:w-20" />
+        : <span key={member.id} title={member.name} className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-xl font-black text-emerald-300 sm:h-20 sm:w-20">{member.name.slice(0, 1).toUpperCase()}</span>)}</div>
+      <div className="w-full truncate text-center text-lg font-black sm:text-2xl">{unit?.name ?? '—'}</div>
+      {unit?.kind === 'team' && <div className="mt-1 text-center text-xs text-slate-400 sm:text-sm">{unit.members.map((member) => member.name).join(' & ')}</div>}
+      <div className="mt-3 font-mono text-2xl font-black tabular-nums sm:text-4xl">{damage}</div>
+      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verursachter Schaden</div>
+      <div className={`mt-3 text-sm font-black uppercase tracking-wider sm:text-base ${won ? 'text-amber-300' : 'text-slate-500'}`}>{won ? 'GEWONNEN' : 'ERGEBNIS'}</div>
+    </div>;
+  };
+
+  return <section aria-live="polite" className="mx-auto w-full max-w-6xl overflow-hidden rounded-3xl border border-amber-400/50 bg-slate-950/95 p-4 text-slate-100 shadow-2xl sm:p-8">
+    <header className="mb-5 text-center sm:mb-8">
+      <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-300">{state.name}</div>
+      <h1 className="mt-2 text-2xl font-black uppercase tracking-wide sm:text-4xl">Spiel beendet</h1>
+      <p className="mt-1 text-sm text-slate-400">{match.label} · {match.stage === 'PRELIMINARY' ? 'Vorrunde' : match.stage === 'SEMIFINALS' ? 'Halbfinale' : 'Finale'}</p>
+    </header>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-5">
+      {side(match.aUnitId, result.aDamageDealt, winnerId === match.aUnitId)}
+      <div className="px-1 text-xs font-black uppercase tracking-widest text-slate-500 sm:text-lg">GEGEN</div>
+      {side(match.bUnitId, result.bDamageDealt, winnerId === match.bUnitId)}
+    </div>
+    <footer className="mt-5 text-center sm:mt-8"><div className="text-[10px] font-bold uppercase tracking-[0.25em] text-amber-400">Sieger dieser Partie</div><div className="mt-1 text-xl font-black text-amber-200 sm:text-3xl">{winner?.name ?? '—'}</div></footer>
+  </section>;
+}

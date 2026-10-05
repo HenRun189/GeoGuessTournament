@@ -11,6 +11,8 @@ export type TournamentFormat = 'round_robin' | 'random_three' | 'groups_of_3';
 /** What a participant unit is: a single player or a 2-player team. */
 export type UnitKind = 'player' | 'team';
 
+export const DISCORD_HELP_TEXT = 'Für weitere Hilfe bitte im Discord im Event-Server im Kanal #probleme melden.';
+
 export interface ParticipantInput {
   name: string;
   country?: string | null;
@@ -37,7 +39,10 @@ export interface UnitDTO {
   name: string;
   abbreviation: string | null;
   country: string | null;
-  members: { id: string; name: string }[];
+  members: { id: string; name: string; imageUrl: string | null }[];
+  readiness: 'waiting' | 'ready' | 'in_game';
+  readinessMatchId: string | null;
+  problemReport: { message: string; createdAt: string; resolved: boolean } | null;
 }
 
 export interface StandingRowDTO {
@@ -89,6 +94,31 @@ export interface GroupDTO {
   unitIds: string[];
 }
 
+export interface PresentationSlideDTO {
+  id: string;
+  title: string;
+  text: string;
+  imageUrl?: string | null;
+}
+
+export interface PresentationDeckDTO {
+  id: string;
+  title: string;
+  slides: PresentationSlideDTO[];
+}
+
+export interface TournamentPresentationDTO {
+  active: boolean;
+  activeDeckId: string;
+  currentIndex: number;
+  decks: PresentationDeckDTO[];
+}
+
+export interface ResultScreenDTO {
+  matchId: string;
+  until: string;
+}
+
 export interface TournamentStateDTO {
   id: string;
   name: string;
@@ -104,6 +134,8 @@ export interface TournamentStateDTO {
   standings: StandingRowDTO[]; // overall preliminary standings (or per-group via groups)
   groupStandings: Record<string, StandingRowDTO[]>;
   knockout: KnockoutDTO | null;
+  presentation: TournamentPresentationDTO;
+  resultScreen: ResultScreenDTO | null;
   settings: OverlaySettingsDTO;
   currentMatchId: string | null;
   seed: number | null; // matchup-generation seed for 7/9/11, stored permanently
@@ -132,11 +164,11 @@ export interface OverlaySettingsDTO {
   compact: boolean;
   transparent: boolean;
   theme: 'dark' | 'light';
-  overlayMode: 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match';
+  overlayMode: 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match' | 'result_screen' | 'presentation';
 }
 
 export interface OverlayOverrideDTO {
-  mode: 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match';
+  mode: 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match' | 'result_screen' | 'presentation';
 }
 
 export interface TournamentSummaryDTO {
@@ -181,6 +213,8 @@ export interface PlayerViewDTO {
   nextOwnMatch: MatchDTO | null; // the match involving this player next in order
   ownMatches: MatchDTO[]; // all matches involving this player, chronological
   status: PlayerStatus;
+  readiness: 'waiting' | 'ready' | 'in_game';
+  problemReport: { message: string; createdAt: string; resolved: boolean } | null;
   gamesBeforeNext: number; // how many games still before the next own match (count of earlier played/next)
 }
 
@@ -194,8 +228,23 @@ export type PlayerStatus =
 
 /** Rules summary used by UI + tests. */
 
-export const OVERLAY_VIEW_ORDER = ['next_matches', 'table', 'bracket', 'current_match'] as const;
+export const OVERLAY_VIEW_ORDER = ['next_matches', 'table', 'bracket', 'current_match', 'result_screen', 'presentation'] as const;
 export type OverlayView = (typeof OVERLAY_VIEW_ORDER)[number];
+
+export const DEFAULT_PRESENTATION_DECKS: PresentationDeckDTO[] = [{
+  id: 'tournament-intro',
+  title: 'Turnierpräsentation',
+  slides: [
+    { id: 'welcome', title: 'Willkommen zum Turnier!', text: 'Schön, dass ihr dabei seid. Macht euch bereit für spannende GeoGuessr-Duelle!' },
+    { id: 'matches', title: 'So laufen die Matches', text: 'Ihr spielt GeoGuessr-Duelle. Die Spielleitung aktiviert die Partien und trägt anschließend Sieger und verursachten Schaden ein.' },
+    { id: 'format', title: 'Turnierformat', text: 'Vorrunde, Halbfinale und Finale – der genaue Vorrundenmodus richtet sich nach der Zahl der Spieler und Teams.' },
+    { id: 'ranking', title: 'Die Rangliste', text: 'Die Reihenfolge richtet sich nach Siegen, danach nach mehr verursachtem Schaden und schließlich nach weniger erlittenem Schaden.' },
+    { id: 'players', title: 'Was ihr tun müsst', text: 'Öffnet eure persönliche Spielerseite. Meldet dort BEREIT oder IN GEOGUESSR und nutzt PROBLEM / HILFE, wenn etwas nicht funktioniert.' },
+    { id: 'finals', title: 'Halbfinale und Finale', text: 'Die bestplatzierten Spieler oder Teams kämpfen im Halbfinale um den Einzug ins Finale. Dort wird der Turniersieg entschieden.' },
+    { id: 'winner', title: 'Der große Moment', text: 'Nach dem Finale feiern wir den Turniersieger – und natürlich gibt es Kuchen und Preise, wenn die Spielleitung etwas vorbereitet hat.' },
+    { id: 'good-luck', title: 'Viel Erfolg!', text: 'Viel Glück, habt Spaß und möge die beste Orientierung gewinnen!' },
+  ],
+}];
 
 /** Rules summary used by UI + tests. */
 export const FORMAT_RULES: Record<number, { unitKind: UnitKind; format: TournamentFormat; groups: number }> = {

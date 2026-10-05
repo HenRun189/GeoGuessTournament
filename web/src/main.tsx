@@ -8,10 +8,12 @@ import AdminPage from './pages/AdminPage';
 import TournamentPage from './pages/TournamentPage';
 import OverlayPage from './pages/OverlayPage';
 import PlayerPage from './pages/PlayerPage';
+import RulesPage from './pages/RulesPage';
 
 const router = createBrowserRouter([
   { path: '/', element: <HomePage /> },
   { path: '/create', element: <CreatePage /> },
+  { path: '/rules', element: <RulesPage /> },
   { path: '/admin/:id', element: <AdminPage /> },
   { path: '/tournament/:id', element: <TournamentPage /> },
   { path: '/player/:tournamentId/:unitId/:slug?', element: <PlayerPage /> },

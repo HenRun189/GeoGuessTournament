@@ -1,6 +1,7 @@
 // Moderator panel: tournament flow control + fast result entry.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { TournamentStateDTO, OverlaySettingsDTO } from '@gt/shared';
 import { api, unitName, useTournamentState } from '../lib/api';
@@ -8,6 +9,8 @@ import StandingsTable from '../components/StandingsTable';
 import MatchList from '../components/MatchList';
 import ResultEntry from '../components/ResultEntry';
 import Bracket from '../components/Bracket';
+import PresentationEditor from '../components/PresentationEditor';
+import { DEFAULT_PRESENTATION_DECKS, type PresentationDeckDTO, type UnitDTO } from '@gt/shared';
 
 const STATE_LABELS: Record<string, string> = {
   SETUP: 'Einrichten',
@@ -20,12 +23,65 @@ const STATE_LABELS: Record<string, string> = {
 export default function AdminPage() {
   const { id } = useParams<{ id: string }>();
   const { state, error, connected, refresh } = useTournamentState(id ?? null);
+  const activeDeck = state?.presentation.decks.find((deck) => deck.id === state.presentation.activeDeckId) ?? state?.presentation.decks[0];
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [confirmMsg, setConfirmMsg] = useState<{ text: string; action: () => Promise<void> } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [copiedUnitId, setCopiedUnitId] = useState<string | null>(null);
   const [pingingUnitId, setPingingUnitId] = useState<string | null>(null);
+  const [presentationDecks, setPresentationDecks] = useState<PresentationDeckDTO[]>([]);
+  const [loadedDeckTournamentId, setLoadedDeckTournamentId] = useState<string | null>(null);
+  const decksLoaded = state !== null && loadedDeckTournamentId === state.id;
+  const [savedDeckId, setSavedDeckId] = useState<string | null>(null);
+  const problemAlertIds = useRef(new Set<string>());
+  const openProblemCount = useRef(0);
+  const alertAudioContext = useRef<AudioContext | null>(null);
+  const unlockedAdminAudio = useRef(false);
+
+
+  useEffect(() => {
+    if (!state || loadedDeckTournamentId === state.id) return;
+    const decks = state.presentation.decks.length ? state.presentation.decks : DEFAULT_PRESENTATION_DECKS;
+    setPresentationDecks(JSON.parse(JSON.stringify(decks)) as PresentationDeckDTO[]);
+    setSavedDeckId(activeDeck?.id ?? null);
+    setLoadedDeckTournamentId(state.id);
+  }, [state?.id, state?.presentation.decks, activeDeck?.id, loadedDeckTournamentId]);
+
+  useEffect(() => {
+    if (!state) return;
+    const openProblems = participantRowsForAlerts(state.units);
+    openProblemCount.current = openProblems.length;
+    const openKeys = new Set(openProblems.map((unit) => `${unit.id}:${unit.problemReport?.createdAt}`));
+    const fresh = [...openKeys].filter((key) => !problemAlertIds.current.has(key));
+    if (fresh.length && unlockedAdminAudio.current) playAdminAlert(alertAudioContext);
+    fresh.forEach((key) => problemAlertIds.current.add(key));
+    for (const key of problemAlertIds.current) {
+      if (!openKeys.has(key)) problemAlertIds.current.delete(key);
+    }
+  }, [state?.units]);
+
+  const enableProblemAudio = async () => {
+    try {
+      const context = alertAudioContext.current ?? new AudioContext();
+      alertAudioContext.current = context;
+      if (context.state === 'suspended') await context.resume();
+      unlockedAdminAudio.current = context.state === 'running';
+      if (unlockedAdminAudio.current && openProblemCount.current > 0) playAdminAlert(alertAudioContext);
+      setFlash(unlockedAdminAudio.current ? 'Problemton aktiviert.' : 'Audio ist nicht verfügbar.');
+    } catch { setFlash('Audio ist nicht verfügbar.'); }
+  };
+
+  useEffect(() => {
+    if (!state?.presentation.active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') void api.setPresentationActive(state.id, false);
+      else if (event.key === 'ArrowLeft') void api.navigatePresentation(state.id, -1);
+      else if (event.key === 'ArrowRight') void api.navigatePresentation(state.id, 1);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [state?.id, state?.presentation.active]);
 
   if (error && !state) {
     return (
@@ -100,7 +156,9 @@ export default function AdminPage() {
             {state.format === 'groups_of_3' ? 'Gruppen' : state.format === 'random_three' ? '3 zufällige Gegner' : 'Rundenspiel'}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn-ghost text-xs" onClick={() => void enableProblemAudio()}>Problemton aktivieren</button>
+          <Link to={`/rules?turnier=${encodeURIComponent(state.id)}`} className="btn-ghost text-xs">Regeln</Link>
           <Link to={`/tournament/${state.id}`} className="btn-ghost text-xs">
             Öffentliche Seite ↗
           </Link>
@@ -114,6 +172,13 @@ export default function AdminPage() {
       </div>
 
       {flash && <div className="mb-3 rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-200">{flash}</div>}
+      {participantRows.filter((row) => row.unit.problemReport && !row.unit.problemReport.resolved).map((row) => {
+        const problem = row.unit.problemReport;
+        if (!problem) return null;
+        return <section key={row.unit.id} role="alert" aria-live="assertive" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-amber-400 bg-amber-950/80 px-4 py-3 text-amber-50 shadow-lg shadow-amber-950/40"><div><div className="font-black uppercase tracking-wide">PROBLEM: {row.unit.name}</div>{row.unit.kind === 'team' && <div className="text-sm">{row.unit.members.map((member) => member.name).join(' & ')}</div>}<div className="mt-1 text-sm">{problem.message}</div></div><button className="btn-secondary" onClick={() => void api.resolveProblem(state.id, row.unit.id).then(() => setFlash('Problemmeldung als erledigt markiert.')).catch((error) => setFlash(error instanceof Error ? error.message : 'Aktion fehlgeschlagen'))}>Als erledigt markieren</button></section>;
+      })}
+
+      {state.presentation.active && <div className="fixed inset-x-0 bottom-4 z-40 flex flex-wrap items-center justify-center gap-2 px-4"><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, -1)}>← ZURÜCK</button><span className="rounded-lg bg-slate-950/95 px-3 py-2 text-sm font-bold text-white">Folie {state.presentation.currentIndex + 1} / {activeDeck?.slides.length ?? 0}</span><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, 1)}>WEITER →</button><button className="btn-danger shadow-lg" onClick={() => void api.setPresentationActive(state.id, false)}>PRÄSENTATION BEENDEN</button></div>}
 
       {/* state controls */}
       <div className="card mb-4 flex flex-wrap gap-2">
@@ -165,11 +230,13 @@ export default function AdminPage() {
                 </button>
               )}
             </div>
-            {state.currentMatchId ? (
+            {editingMatchId ? (
+              <div><div className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-300">{state.matches.find((match) => match.id === editingMatchId)?.status === 'finished' ? 'Ergebnis bearbeiten' : 'Ergebnis eingeben'}</div><ResultEntry key={editingMatchId} matchId={editingMatchId} state={state} editing={state.matches.find((match) => match.id === editingMatchId)?.status === 'finished'} onSaved={() => { setEditingMatchId(null); void refresh(); }} /></div>
+            ) : state.currentMatchId ? (
               <ResultEntry matchId={state.currentMatchId} state={state} onSaved={() => void refresh()} />
             ) : (
               <div className="text-sm text-slate-500">
-                Kein aktuelles Spiel ausgewählt. 'Als Live setzen' auf einem Spiel verwenden →
+                Kein aktuelles Spiel ausgewählt. Ein beliebiges kommendes Spiel unten mit „JETZT SPIELEN“ sofort aktivieren →
                 {nextMatches.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {nextMatches.map((m) => (
@@ -199,7 +266,7 @@ export default function AdminPage() {
               onSelectCurrent={(mid) => void act(() => api.setCurrentMatch(state.id, mid))()}
               onEdit={(mid) => {
                 setEditingMatchId(mid);
-                void act(() => api.setCurrentMatch(state.id, mid))();
+                if (state.matches.find((match) => match.id === mid)?.status !== 'finished') void act(() => api.setCurrentMatch(state.id, mid))();
               }}
             />
           </div>
@@ -215,14 +282,14 @@ export default function AdminPage() {
             {state.groups.length > 0 ? (
               <div className="space-y-4">
                 {state.groups.map((g) => (
-                  <StandingsTable key={g.id} title={g.name} rows={state.groupStandings[g.id] ?? []} showFlags />
+                  <StandingsTable key={g.id} title={g.name} rows={state.groupStandings[g.id] ?? []} showFlags state={state} />
                 ))}
                 <div className="border-t border-slate-800 pt-2">
-                  <StandingsTable rows={state.standings} title="Gesamt" showFlags />
+                  <StandingsTable rows={state.standings} title="Gesamt" showFlags state={state} />
                 </div>
               </div>
             ) : (
-              <StandingsTable rows={state.standings} showFlags />
+              <StandingsTable rows={state.standings} showFlags state={state} />
             )}
           </div>
 
@@ -234,19 +301,55 @@ export default function AdminPage() {
 
           {/* overlay settings */}
           <OverlaySettingsCard state={state} />
+          <PresentationEditor
+            state={state}
+            decks={presentationDecks}
+            setDecks={setPresentationDecks}
+            decksLoaded={decksLoaded}
+            onSave={async () => { await api.updatePresentationDecks(state.id, presentationDecks); setFlash('Präsentationen gespeichert.'); }}
+            onStart={async (deckId) => {
+              try {
+                const context = alertAudioContext.current ?? new AudioContext();
+                alertAudioContext.current = context;
+                if (context.state === 'suspended') await context.resume();
+                unlockedAdminAudio.current = context.state === 'running';
+              } catch { unlockedAdminAudio.current = false; }
+              await api.updatePresentationDecks(state.id, presentationDecks);
+              await api.selectPresentationDeck(state.id, deckId);
+              await api.setPresentationActive(state.id, true);
+            }}
+            onSelect={(deckId) => { setSavedDeckId(deckId); if (state.presentation.decks.some((deck) => deck.id === deckId)) void api.selectPresentationDeck(state.id, deckId); }}
+            selectedDeckId={savedDeckId ?? state.presentation.activeDeckId}
+            active={state.presentation.active}
+            onDeleteDeck={async (deckId) => {
+              const nextDecks = presentationDecks.filter((deck) => deck.id !== deckId);
+              setPresentationDecks(nextDecks);
+              await api.updatePresentationDecks(state.id, nextDecks);
+              const selected = nextDecks[0];
+              if (selected) { setSavedDeckId(selected.id); await api.selectPresentationDeck(state.id, selected.id); }
+            }}
+          />
         </div>
       </div>
 
       <section className="mt-5 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
         <button type="button" aria-expanded={participantsOpen} onClick={() => setParticipantsOpen((open) => !open)} className="flex w-full items-center justify-between px-4 py-4 text-left">
-          <span><span className="block font-bold">Spieler & Teams</span><span className="text-xs text-slate-400">{state.units.length} persönliche Seiten · Status, Spielplan und Benachrichtigungen</span></span>
+          <span><span className="block font-bold">Spieler & Teams</span><span className="text-xs text-slate-400">{state.units.length} persönliche Seiten · Bereitschaft, Hilfe, Bilder und Live-Status</span></span>
           <span className="text-sm text-emerald-300">{participantsOpen ? 'Schließen −' : 'Öffnen +'}</span>
         </button>
         {participantsOpen && <div className="space-y-3 border-t border-slate-800 p-4">
           {participantRows.map((row) => <article key={row.unit.id} className={`rounded-xl border p-3 ${row.active?.id === state.currentMatchId ? 'border-red-500/60 bg-red-500/5' : 'border-slate-800 bg-slate-950/40'}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="font-bold">{row.unit.name}</h3>
+                <div className="flex items-center gap-2">
+                  <div className="flex -space-x-2">{row.unit.members.map((member) => member.imageUrl ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-8 w-8 rounded-full border-2 border-slate-900 object-cover" /> : <span key={member.id} title={member.name} className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-xs font-bold">{member.name.slice(0, 1)}</span>)}</div>
+                  <h3 className="font-bold">{row.unit.name}</h3>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  <span className={`rounded px-2 py-0.5 font-bold ${row.active ? 'bg-red-600 text-white' : row.eliminated ? 'bg-slate-700 text-slate-300' : row.unit.readiness === 'in_game' ? 'bg-emerald-500/20 text-emerald-200' : row.unit.readiness === 'ready' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-800 text-slate-300'}`}>{row.active ? 'DU BIST DRAN' : row.eliminated ? 'AUSGESCHIEDEN' : row.unit.readiness === 'in_game' ? 'IN GEOGUESSR' : row.unit.readiness === 'ready' ? 'BEREIT' : 'WARTET'}</span>
+                  {row.unit.readiness === 'ready' && <span className="text-emerald-300">Bereit ✓</span>}
+                  {row.unit.readiness === 'in_game' && <span className="text-emerald-200">Im Spiel ✓</span>}
+                </div>
                 {row.unit.kind === 'team' && <div className="text-xs text-slate-400">{row.unit.members.map((member) => member.name).join(' & ')}</div>}
                 <div className="mt-1"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${row.active ? 'bg-red-600 text-white' : row.upcoming && row.waitingBefore === 0 ? 'bg-amber-400 text-slate-950' : row.eliminated ? 'bg-slate-700 text-slate-300' : 'bg-slate-800 text-slate-300'}`}>{row.status}</span></div>
               </div>
@@ -258,6 +361,24 @@ export default function AdminPage() {
               <div>Gegner: {unitName(state, row.opponentId)}</div>
             </div>
             <div className="mt-2 text-xs text-slate-500">{row.current ? `${row.current.label} · ${row.current.stage === 'PRELIMINARY' ? 'Vorrunde' : row.current.stage === 'SEMIFINALS' ? 'Halbfinale' : 'Finale'}` : 'Keine aktive Partie'}</div>
+            {row.unit.problemReport && <div className={`mt-3 rounded-lg border p-3 text-sm ${row.unit.problemReport.resolved ? 'border-slate-700 bg-slate-900/70 text-slate-300' : 'border-amber-500/50 bg-amber-500/10 text-amber-100'}`}>
+              <div className="font-bold">{row.unit.problemReport.resolved ? 'Erledigte Problemmeldung' : `${row.unit.name} hat ein Problem`}</div>
+              <p className="mt-1">{row.unit.problemReport.message}</p>
+              {!row.unit.problemReport.resolved && <button className="btn-secondary mt-2 px-2 py-1 text-xs" onClick={async () => { try { await api.resolveProblem(state.id, row.unit.id); setFlash('Problemmeldung als erledigt markiert.'); } catch (e) { setFlash(e instanceof Error ? e.message : 'Aktion fehlgeschlagen'); } }}>Als erledigt markieren</button>}
+            </div>}
+            <div className="mt-3 space-y-2">
+              {row.unit.members.map((member) => <div key={member.id} className="flex flex-wrap items-center gap-2 rounded bg-slate-900/60 p-2">
+                {member.imageUrl ? <img src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-10 w-10 rounded-full object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-sm font-bold">{member.name.slice(0, 1)}</div>}
+                <span className="min-w-24 flex-1 text-sm">{member.name}</span>
+                <label className="btn-secondary cursor-pointer px-2 py-1 text-xs">{member.imageUrl ? 'Bild ändern' : 'Bild hochladen'}<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={async (event) => {
+                  const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+                  if (file.size > 4 * 1024 * 1024) { setFlash('Bild darf höchstens 4 MB groß sein.'); return; }
+                  try { const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden')); reader.readAsDataURL(file); }); await api.uploadParticipantImage(state.id, member.id, file.type, data); setFlash('Profilbild gespeichert.'); }
+                  catch (e) { setFlash(e instanceof Error ? e.message : 'Bild konnte nicht gespeichert werden'); }
+                }} /></label>
+                {member.imageUrl && <button className="btn-ghost px-2 py-1 text-xs" onClick={async () => { try { await api.removeParticipantImage(state.id, member.id); setFlash('Profilbild entfernt.'); } catch (e) { setFlash(e instanceof Error ? e.message : 'Bild konnte nicht entfernt werden'); } }}>Entfernen</button>}
+              </div>)}
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link to={row.path} target="_blank" rel="noreferrer" className="btn-ghost px-2 py-1 text-xs">Player-Seite öffnen</Link>
               <button className="btn-secondary px-2 py-1 text-xs" onClick={async () => {
@@ -304,6 +425,32 @@ export default function AdminPage() {
   );
 }
 
+function participantRowsForAlerts(units: UnitDTO[]): UnitDTO[] {
+  return units.filter((unit) => unit.problemReport && !unit.problemReport.resolved);
+}
+
+function playAdminAlert(contextRef: MutableRefObject<AudioContext | null>): void {
+  try {
+    const context = contextRef.current;
+    if (!context || context.state !== 'running') return;
+    const now = context.currentTime;
+    [880, 1174.66, 880].forEach((frequency, index) => {
+      const start = now + index * 0.2;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + 0.19);
+    });
+  } catch { /* keep the visual admin alert available if audio is blocked */ }
+}
+
 function nextStageOf(state: TournamentStateDTO): string {
   switch (state.state) {
     case 'SETUP':
@@ -332,12 +479,14 @@ function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
     });
   };
 
-  const modes: { key: 'auto' | 'next_matches' | 'table' | 'bracket' | 'current_match'; label: string }[] = [
+  const modes: { key: OverlaySettingsDTO['overlayMode']; label: string }[] = [
     { key: 'auto', label: 'AUTO' },
     { key: 'next_matches', label: 'Nächste Spiele' },
     { key: 'table', label: 'Tabelle' },
     { key: 'bracket', label: 'Turnierbaum' },
     { key: 'current_match', label: 'Aktuelles Spiel' },
+    { key: 'result_screen', label: 'Ergebnis' },
+    { key: 'presentation', label: 'Präsentation' },
   ];
 
   return (
@@ -346,8 +495,7 @@ function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
         <div className="text-xs font-bold uppercase tracking-wider text-emerald-400">Overlay-Einstellungen</div>
         {saved && <span className="text-xs text-emerald-400">Gespeichert ✓</span>}
       </div>
-
-      <div className="mb-3 flex gap-1">
+      <div className="mb-3 flex flex-wrap gap-1">
         {modes.map((m) => (
           <button
             key={m.key}

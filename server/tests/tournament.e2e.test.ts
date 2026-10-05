@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { TournamentStateDTO } from '@gt/shared';
 import { prisma } from '../src/services/db.js';
-import { createTournament, saveResult, undoLastResult, setTournamentState, resetTournament, setCurrentMatch, sendManualPing } from '../src/services/mutations.js';
+import { createTournament, saveResult, editResult, undoLastResult, setTournamentState, resetTournament, setCurrentMatch, sendManualPing, setReadiness, reportProblem, resolveProblem, uploadParticipantImage, removeParticipantImage, updatePresentationDecks, selectPresentationDeck, navigatePresentation, setPresentationActive } from '../src/services/mutations.js';
 import { addClient, broadcast } from '../src/services/db.js';
 import { consumeActivationOnce } from '@gt/shared';
 import { getTournamentState } from '../src/services/state.js';
@@ -284,6 +284,229 @@ describe('tournament lifecycle across all sizes', () => {
     }
   });
 
+  it('readiness is match-scoped, live, and does not alter tournament state', async () => {
+    const id = await createTournament({ name: 'Readiness', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    const before = await getTournamentState(id);
+    const match = before.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    await setCurrentMatch(id, match.id);
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      const beforeReady = await getTournamentState(id);
+      await setReadiness(id, match.aUnitId!, 'ready');
+      let state = await getTournamentState(id);
+      expect(state.state).toBe(beforeReady.state);
+      expect(state.currentMatchId).toBe(match.id);
+      expect(state.matches).toEqual(beforeReady.matches);
+      expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('ready');
+      await setReadiness(id, match.aUnitId!, 'in_game');
+      state = await getTournamentState(id);
+      expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('in_game');
+      expect(events.some((event) => event.type === 'state' && event.state?.units.find((unit) => unit.id === match.aUnitId)?.readiness === 'in_game')).toBe(true);
+      await saveResult(id, match.id, { winnerUnitId: match.aUnitId!, aDamageDealt: 500, bDamageDealt: 400 });
+      state = await getTournamentState(id);
+      expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('waiting');
+    } finally { remove(); }
+    await expect(setReadiness(id, 'missing-unit', 'ready')).rejects.toThrow(/not found/i);
+  });
+
+  it('admin presentation decks are configurable, navigate live, and never change tournament progression', async () => {
+    const id = await createTournament({ name: 'Presentation controls', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    const initial = await getTournamentState(id);
+    const match = initial.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    await setCurrentMatch(id, match.id);
+    const before = await getTournamentState(id);
+    const decks = [
+      { id: 'welcome', title: 'Auftakt', slides: [
+        { id: 'first', title: 'Willkommen', text: 'Start', imageUrl: null },
+        { id: 'second', title: 'Regeln', text: 'Spielt fair.', imageUrl: null },
+        { id: 'third', title: 'Los geht’s', text: 'Viel Erfolg!', imageUrl: null },
+      ] },
+      { id: 'finals', title: 'Finale', slides: [{ id: 'final', title: 'Finale', text: 'Das Endspiel.', imageUrl: null }] },
+    ];
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      await updatePresentationDecks(id, decks);
+      let state = await getTournamentState(id);
+      expect(state.presentation.decks).toEqual(decks);
+      expect(state.presentation.active).toBe(false);
+      expect(state.currentMatchId).toBe(before.currentMatchId);
+      expect(state.state).toBe(before.state);
+      expect(state.matches).toEqual(before.matches);
+
+      await selectPresentationDeck(id, 'welcome');
+      await setPresentationActive(id, true);
+      await navigatePresentation(id, 1);
+      state = await getTournamentState(id);
+      expect(state.presentation).toMatchObject({ active: true, activeDeckId: 'welcome', currentIndex: 1 });
+      expect(state.state).toBe(before.state);
+      expect(state.currentMatchId).toBe(before.currentMatchId);
+      expect(state.matches).toEqual(before.matches);
+      await navigatePresentation(id, 1);
+      await navigatePresentation(id, 1);
+      expect((await getTournamentState(id)).presentation.currentIndex).toBe(2);
+      await navigatePresentation(id, -1);
+      expect((await getTournamentState(id)).presentation.currentIndex).toBe(1);
+      await selectPresentationDeck(id, 'finals');
+      state = await getTournamentState(id);
+      expect(state.presentation).toMatchObject({ active: false, activeDeckId: 'finals', currentIndex: 0 });
+      expect(events.some((event) => event.type === 'state' && event.state?.presentation.active && event.state.presentation.currentIndex === 1)).toBe(true);
+      await setPresentationActive(id, true);
+      await setPresentationActive(id, false);
+      expect((await getTournamentState(id)).presentation.active).toBe(false);
+      await expect(updatePresentationDecks(id, [decks[0], decks[0]])).rejects.toThrow(/eindeutig/);
+      await expect(navigatePresentation(id, 1)).rejects.toThrow(/nicht aktiv/);
+    } finally { remove(); }
+  });
+
+  it('automatically publishes a timed result screen after saving a result', async () => {
+    const id = await createTournament({ name: 'Result screen', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    const before = await getTournamentState(id);
+    const match = before.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      await saveResult(id, match.id, { winnerUnitId: match.aUnitId!, aDamageDealt: 720, bDamageDealt: 410 });
+      const state = await getTournamentState(id);
+      expect(state.matches.find((candidate) => candidate.id === match.id)?.result).toMatchObject({ winnerUnitId: match.aUnitId, aDamageDealt: 720, bDamageDealt: 410 });
+      expect(state.resultScreen?.matchId).toBe(match.id);
+      expect(Date.parse(state.resultScreen!.until)).toBeGreaterThan(Date.now());
+      expect(events.some((event) => event.type === 'state' && event.state?.resultScreen?.matchId === match.id)).toBe(true);
+      await prisma.tournament.update({ where: { id }, data: { resultScreenUntil: new Date(Date.now() - 1000) } });
+      expect((await getTournamentState(id)).resultScreen).toBeNull();
+    } finally { remove(); }
+  });
+
+  it('problem reports are bounded, live, and can be resolved by the admin', async () => {
+    const id = await createTournament({ name: 'Help', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    const state = await getTournamentState(id);
+    const unitId = state.units[0].id;
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      await reportProblem(id, unitId, ' Ich kann das GeoGuessr-Spiel nicht öffnen. ');
+      let current = await getTournamentState(id);
+      expect(current.units.find((unit) => unit.id === unitId)?.problemReport).toMatchObject({ message: 'Ich kann das GeoGuessr-Spiel nicht öffnen.', resolved: false });
+      expect(events.some((event) => event.type === 'state' && event.state?.units.find((unit) => unit.id === unitId)?.problemReport?.message.includes('nicht öffnen'))).toBe(true);
+      await resolveProblem(id, unitId);
+      current = await getTournamentState(id);
+      expect(current.units.find((unit) => unit.id === unitId)?.problemReport?.resolved).toBe(true);
+      await expect(reportProblem(id, unitId, 'x'.repeat(301))).rejects.toThrow(/300 Zeichen/);
+    } finally { remove(); }
+  });
+
+  it('correcting a preliminary result rebuilds knockouts and recalculates the rankings', async () => {
+    const id = await createTournament({ name: 'Edit prelim', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    let state = await playAll(id);
+    const match = state.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    const originalWinner = match.result!.winnerUnitId;
+    const correctedWinner = originalWinner === match.aUnitId ? match.bUnitId! : match.aUnitId!;
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      await editResult(id, match.id, { winnerUnitId: correctedWinner, aDamageDealt: 900, bDamageDealt: 100 });
+      state = await getTournamentState(id);
+      expect(state.state).toBe('SEMIFINALS');
+      expect(state.matches.find((candidate) => candidate.id === match.id)?.result?.winnerUnitId).toBe(correctedWinner);
+      expect(state.matches.filter((candidate) => candidate.stage === 'SEMIFINALS')).toHaveLength(2);
+      expect(state.matches.filter((candidate) => candidate.stage === 'SEMIFINALS').every((candidate) => candidate.result === null)).toBe(true);
+      expect(state.matches.some((candidate) => candidate.stage === 'FINAL')).toBe(false);
+      expect(events.some((event) => event.type === 'state' && event.state?.matches.find((candidate) => candidate.id === match.id)?.result?.winnerUnitId === correctedWinner)).toBe(true);
+    } finally { remove(); }
+  });
+
+  it('correcting semifinals rebuilds final, and correcting a finished final changes the champion', async () => {
+    const id = await createTournament({ name: 'Edit knockout', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    let state = await playAll(id);
+    const semifinal = state.matches.find((candidate) => candidate.stage === 'SEMIFINALS')!;
+    const sfWinner = semifinal.result!.winnerUnitId === semifinal.aUnitId ? semifinal.bUnitId! : semifinal.aUnitId!;
+    await editResult(id, semifinal.id, { winnerUnitId: sfWinner, aDamageDealt: 777, bDamageDealt: 333 });
+    state = await getTournamentState(id);
+    expect(state.state).toBe('FINAL');
+    const final = state.matches.find((candidate) => candidate.stage === 'FINAL')!;
+    expect(final.result).toBeNull();
+    expect(final.aUnitId).toBe(state.matches.find((candidate) => candidate.id === semifinal.id)?.result?.winnerUnitId);
+
+    const finalWinner = final.result?.winnerUnitId ?? final.aUnitId!;
+    const correctedFinalWinner = finalWinner === final.aUnitId ? final.bUnitId! : final.aUnitId!;
+    await saveResult(id, final.id, { winnerUnitId: finalWinner, aDamageDealt: 600, bDamageDealt: 500 });
+    state = await getTournamentState(id);
+    expect(state.state).toBe('FINISHED');
+    await editResult(id, final.id, { winnerUnitId: correctedFinalWinner, aDamageDealt: 200, bDamageDealt: 850 });
+    state = await getTournamentState(id);
+    expect(state.state).toBe('FINISHED');
+    expect(state.knockout?.championUnitId).toBe(correctedFinalWinner);
+  });
+
+  it('manual activation selects any valid upcoming match and rejects unresolved matches', async () => {
+    const id = await createTournament({ name: 'Manual activation', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    let state = await getTournamentState(id);
+    const first = state.matches.find((match) => match.stage === 'PRELIMINARY')!;
+    await setCurrentMatch(id, first.id);
+    state = await getTournamentState(id);
+    const later = [...state.matches].reverse().find((match) => match.stage === 'PRELIMINARY' && match.status === 'waiting')!;
+    await setCurrentMatch(id, later.id);
+    state = await getTournamentState(id);
+    expect(state.currentMatchId).toBe(later.id);
+    expect(state.matches.find((match) => match.id === first.id)?.status).toBe('waiting');
+    expect(state.matches.find((match) => match.id === later.id)?.status).toBe('live');
+    const knockoutOnly = await createTournament({ name: 'Manual semifinal', participantCount: 4, participants: individualParticipants(4) });
+    created.push(knockoutOnly);
+    const knockoutState = await playAllPreliminaries(knockoutOnly);
+    const validSemifinal = knockoutState.matches.find((match) => match.stage === 'SEMIFINALS')!;
+    await setCurrentMatch(knockoutOnly, validSemifinal.id);
+    const activated = await getTournamentState(knockoutOnly);
+    expect(activated.currentMatchId).toBe(validSemifinal.id);
+    expect(activated.matches.find((match) => match.id === validSemifinal.id)?.status).toBe('live');
+  });
+
+  it('profile images validate file signatures and update member image URLs', async () => {
+    const id = await createTournament({ name: 'Player images', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    const before = await getTournamentState(id);
+    const participantId = before.units[0].members[0].id;
+    // Minimal valid PNG header is sufficient for this boundary validation test.
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l3sAAAAASUVORK5CYII=', 'base64');
+    await uploadParticipantImage(id, participantId, { mimeType: 'image/png', dataBase64: png.toString('base64') });
+    let state = await getTournamentState(id);
+    const imageUrl = state.units[0].members[0].imageUrl;
+    expect(imageUrl).toMatch(/^\/api\/uploads\/profile_/);
+    await expect(uploadParticipantImage(id, participantId, { mimeType: 'image/png', dataBase64: Buffer.from('not png').toString('base64') })).rejects.toThrow(/PNG/);
+    const tooLarge = Buffer.alloc(4 * 1024 * 1024 + 1).toString('base64');
+    await expect(uploadParticipantImage(id, participantId, { mimeType: 'image/png', dataBase64: tooLarge })).rejects.toThrow(/4 MB/);
+    await removeParticipantImage(id, participantId);
+    state = await getTournamentState(id);
+    expect(state.units[0].members[0].imageUrl).toBeNull();
+  });
+
   it('reset regenerates schedule and clears results', async () => {
     const id = await createTournament({ name: 'Reset', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
@@ -319,9 +542,14 @@ describe('tournament lifecycle across all sizes', () => {
     ).rejects.toThrow(/unique/i);
   });
 
-  it('deleteTournament removes all related data', async () => {
+  it('deleteTournament removes all related data, including an active current-match reference', async () => {
     const { deleteTournament } = await import('../src/services/mutations.js');
     const id = await createTournament({ name: 'Del', participantCount: 4, participants: individualParticipants(4) });
+    await setTournamentState(id, 'PRELIMINARY');
+    const state = await getTournamentState(id);
+    const match = state.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    await setCurrentMatch(id, match.id);
+    expect((await getTournamentState(id)).currentMatchId).toBe(match.id);
     await deleteTournament(id);
     await expect(getTournamentState(id)).rejects.toThrow(/not found/i);
   });

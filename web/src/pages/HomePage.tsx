@@ -53,6 +53,7 @@ export default function HomePage() {
             GeoGuessr <span className="text-emerald-400">Turnier</span>
           </h1>
           <p className="text-sm text-slate-400">Host, führe Turniere durch und stream — Alpha/Beta</p>
+          <Link to="/rules" className="mt-2 inline-block text-xs font-semibold text-emerald-300 underline">Regeln & Ablauf</Link>
         </div>
         <Link to="/create" className="btn-primary">
           + Neues Turnier
@@ -123,7 +124,7 @@ export default function HomePage() {
                 {t.participantCount} Teilnehmer · {t.state} · <span className="font-mono">{t.id}</span>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Link to={`/admin/${t.id}`} className="btn-secondary">
                 Admin
               </Link>
@@ -133,6 +134,13 @@ export default function HomePage() {
               <Link to={`/overlay/${t.id}`} className="btn-ghost">
                 Overlay
               </Link>
+              <button className="btn-danger" disabled={busy} onClick={async () => {
+                if (!window.confirm(`Turnier „${t.name}“ wirklich löschen? Alle zugehörigen Turnierdaten und Spielerbilder werden entfernt.`)) return;
+                setBusy(true); setError(null);
+                try { await api.deleteTournament(t.id); setTournaments((rows) => rows.filter((row) => row.id !== t.id)); }
+                catch (e) { setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen'); }
+                finally { setBusy(false); }
+              }}>Löschen</button>
             </div>
           </div>
         ))}
