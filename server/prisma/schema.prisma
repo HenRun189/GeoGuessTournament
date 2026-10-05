@@ -1,0 +1,135 @@
+// GeoGuessr Tournament — Alpha/Beta schema (SQLite).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tournament {
+  id               String   @id // short shareable id, e.g. abc123
+  name             String
+  state            String   // SETUP | PRELIMINARY | SEMIFINALS | FINAL | FINISHED
+  format           String   // round_robin | random_three | groups_of_3
+  unitKind         String   // player | team
+  participantCount Int
+  seed             Int?     // matchup-generation seed for 7/9/11
+  isDemo           Boolean  @default(false)
+  paused           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  participants Participant[]
+  units        Unit[]
+  groups       Group[]
+  matches      Match[]
+  settings     TournamentSettings?
+  currentMatch Match?              @relation("CurrentMatch", fields: [currentMatchId], references: [id])
+  currentMatchId String?
+}
+
+model Participant {
+  id           String  @id
+  tournamentId String
+  name         String
+  country      String?
+  abbreviation String?
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  teams        TeamMember[]
+
+  @@index([tournamentId])
+}
+
+model Unit {
+  id           String  @id // equals participant id (single) or team id (team)
+  tournamentId String
+  kind         String // player | team
+  name         String
+  country      String?
+  abbreviation String?
+  teamId       String? // set when kind = team
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  groups       GroupMembership[]
+
+  @@index([tournamentId])
+}
+
+model TeamMember {
+  id            String @default(cuid())
+  unitId        String
+  participantId String
+  unit          Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, participantId])
+}
+
+model Group {
+  id           String @id
+  tournamentId String
+  name         String
+  tournament   Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  members      GroupMembership[]
+
+  @@index([tournamentId])
+}
+
+model GroupMembership {
+  id      String @default(cuid())
+  groupId String
+  unitId  String
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  unit    Unit  @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, unitId])
+}
+
+model Match {
+  id           String  @id
+  tournamentId String
+  stage        String // PRELIMINARY | SEMIFINALS | FINAL
+  round        Int
+  orderInStage Int
+  label        String
+  aUnitId      String?
+  bUnitId      String?
+  slotA        String? // JSON of SlotRef
+  slotB        String? // JSON of SlotRef
+  status       String  @default("waiting") // waiting | live | finished
+  sfIndex      Int? // 1 | 2 for semifinals
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  result       MatchResult?
+  currentFor   Tournament[] @relation("CurrentMatch")
+
+  @@unique([tournamentId, stage, orderInStage])
+  @@index([tournamentId])
+}
+
+model MatchResult {
+  id           String   @id @default(cuid())
+  matchId      String   @unique
+  winnerUnitId String
+  aDamageDealt Int
+  bDamageDealt Int
+  createdAt    DateTime @default(now())
+  match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+}
+
+model TournamentSettings {
+  id                  String  @id @default(cuid())
+  tournamentId        String  @unique
+  autoRotation        Boolean @default(true)
+  rotationIntervalSec Int     @default(30)
+  showLogo            Boolean @default(true)
+  showTournamentName  Boolean @default(true)
+  showFlags           Boolean @default(true)
+  compact             Boolean @default(false)
+  transparent         Boolean @default(true)
+  theme               String  @default("dark")
+  overlayMode         String  @default("auto") // auto | next_matches | table | bracket | current_match
+  tournament          Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+}

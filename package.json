@@ -1,0 +1,27 @@
+{
+  "name": "geoguessr-tournament",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "shared",
+    "engine",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev:api": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w shared && npm run build -w engine && npm run build -w server && npm run build -w web",
+    "test": "npm run test -w engine && npm run test -w server",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w engine && npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.2.1",
+    "concurrently": "^9.1.0",
+    "prisma": "^6.2.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.7.0"
+  }
+}
