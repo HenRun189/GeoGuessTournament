@@ -20,7 +20,7 @@ export const api = {
   setState: (id: string, state: string) => request(`/tournaments/${id}/state`, { method: 'POST', body: JSON.stringify({ state }) }),
   reset: (id: string) => request(`/tournaments/${id}/reset`, { method: 'POST' }),
   deleteTournament: (id: string) => request(`/tournaments/${id}`, { method: 'DELETE' }),
-  setReadiness: (id: string, unitId: string, readiness: 'ready' | 'in_game') =>
+  setReadiness: (id: string, unitId: string, readiness: 'waiting' | 'ready' | 'in_game') =>
     request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/readiness`, { method: 'POST', body: JSON.stringify({ readiness }) }),
   reportProblem: (id: string, unitId: string, message: string) =>
     request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem`, { method: 'POST', body: JSON.stringify({ message }) }),
@@ -50,6 +50,17 @@ export const api = {
     request(`/tournaments/${id}/presentation/deck`, { method: 'POST', body: JSON.stringify({ deckId }) }),
   setPresentationActive: (id: string, active: boolean) =>
     request(`/tournaments/${id}/presentation/active`, { method: 'POST', body: JSON.stringify({ active }) }),
+  uploadPresentationVideo: async (id: string, file: File) => {
+    const res = await fetch(`/api/tournaments/${id}/presentation/video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed: ${res.status}`);
+  },
+  setPresentationVideoActive: (id: string, active: boolean) =>
+    request(`/tournaments/${id}/presentation/video/active`, { method: 'POST', body: JSON.stringify({ active }) }),
   navigatePresentation: (id: string, direction: -1 | 1) =>
     request(`/tournaments/${id}/presentation/navigate`, { method: 'POST', body: JSON.stringify({ direction }) }),
   createDemo: (kind: 'full' | 'team' | 'groups') => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind }) }),

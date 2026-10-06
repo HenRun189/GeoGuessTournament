@@ -653,7 +653,10 @@ export async function resetTournament(tournamentId: string): Promise<void> {
 }
 
 export async function deleteTournament(tournamentId: string): Promise<void> {
-  const images = await prisma.participant.findMany({ where: { tournamentId }, select: { imagePath: true } });
+  const [images, tournament] = await Promise.all([
+    prisma.participant.findMany({ where: { tournamentId }, select: { imagePath: true } }),
+    prisma.tournament.findUnique({ where: { id: tournamentId }, select: { presentationVideoPath: true } }),
+  ]);
   try {
     // Break the optional current-match reference before cascading into matches.
     await prisma.tournament.update({ where: { id: tournamentId }, data: { currentMatchId: null } });
@@ -661,7 +664,10 @@ export async function deleteTournament(tournamentId: string): Promise<void> {
   } catch {
     throw new ServiceError('Tournament not found', 404);
   }
-  await Promise.all(images.map((participant) => removeStoredImage(participant.imagePath)));
+  await Promise.all([
+    ...images.map((participant) => removeStoredImage(participant.imagePath)),
+    removeStoredVideo(tournament?.presentationVideoPath ?? null),
+  ]);
   broadcastAllSafe();
 }
 
@@ -743,7 +749,7 @@ export async function setCurrentMatch(tournamentId: string, matchId: string | nu
   await emit(tournamentId);
 }
 
-export async function setReadiness(tournamentId: string, unitId: string, readiness: 'ready' | 'in_game'): Promise<void> {
+export async function setReadiness(tournamentId: string, unitId: string, readiness: 'waiting' | 'ready' | 'in_game'): Promise<void> {
   const tournament = await prisma.tournament.findUnique({ where: { id: tournamentId }, include: { matches: true } });
   if (!tournament) throw new ServiceError('Tournament not found', 404);
   const unit = await prisma.unit.findFirst({ where: { id: unitId, tournamentId } });
@@ -752,7 +758,10 @@ export async function setReadiness(tournamentId: string, unitId: string, readine
     .filter((match) => match.status !== 'finished' && (match.aUnitId === unitId || match.bUnitId === unitId));
   const upcoming = ownOpenMatches.find((match) => match.status === 'live') ?? ownOpenMatches.sort((a, b) => matchOrder(a) - matchOrder(b))[0];
   if (!upcoming) throw new ServiceError('Es ist kein eigenes Spiel mehr offen');
-  await prisma.unit.update({ where: { id: unitId }, data: { readiness, readinessMatchId: upcoming.id } });
+  await prisma.unit.update({
+    where: { id: unitId },
+    data: { readiness, readinessMatchId: readiness === 'waiting' ? null : upcoming.id },
+  });
   await emit(tournamentId);
 }
 
@@ -777,12 +786,20 @@ export async function resolveProblem(tournamentId: string, unitId: string): Prom
 
 const uploadRoot = fileURLToPath(new URL('../../../server/uploads/', import.meta.url));
 const maxImageBytes = 4 * 1024 * 1024;
+const maxPresentationVideoBytes = 100 * 1024 * 1024;
 
 function imageExtension(bytes: Buffer, mimeType: string): string | null {
   if (mimeType === 'image/png' && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'png';
   if (mimeType === 'image/jpeg' && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpg';
   if (mimeType === 'image/webp' && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'webp';
   return null;
+}
+
+async function removeStoredVideo(videoPath: string | null): Promise<void> {
+  if (!videoPath || basename(videoPath) !== videoPath || !/^presentation_[a-zA-Z0-9_-]+\.mp4$/.test(videoPath)) return;
+  await unlink(join(uploadRoot, videoPath)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
 }
 
 async function removeStoredImage(imagePath: string | null): Promise<void> {
@@ -819,6 +836,36 @@ export async function uploadParticipantImage(
     throw error;
   }
   await removeStoredImage(participant.imagePath);
+  await emit(tournamentId);
+}
+
+export async function uploadPresentationVideo(tournamentId: string, bytes: Buffer): Promise<void> {
+  const tournament = await prisma.tournament.findUnique({ where: { id: tournamentId }, select: { presentationVideoPath: true } });
+  if (!tournament) throw new ServiceError('Tournament not found', 404);
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > maxPresentationVideoBytes) {
+    throw new ServiceError('Das MP4-Video muss kleiner als 100 MB sein');
+  }
+  if (bytes.length < 12 || bytes.toString('ascii', 4, 8) !== 'ftyp') {
+    throw new ServiceError('Die Datei ist kein gültiges MP4-Video');
+  }
+  await mkdir(uploadRoot, { recursive: true });
+  const videoPath = `presentation_${nanoid(18)}.mp4`;
+  await writeFile(join(uploadRoot, videoPath), bytes, { flag: 'wx' });
+  try {
+    await prisma.tournament.update({ where: { id: tournamentId }, data: { presentationVideoPath: videoPath, presentationVideoActive: false } });
+  } catch (error) {
+    await removeStoredVideo(videoPath);
+    throw error;
+  }
+  await removeStoredVideo(tournament.presentationVideoPath);
+  await emit(tournamentId);
+}
+
+export async function setPresentationVideoActive(tournamentId: string, active: boolean): Promise<void> {
+  const tournament = await prisma.tournament.findUnique({ where: { id: tournamentId }, select: { presentationVideoPath: true } });
+  if (!tournament) throw new ServiceError('Tournament not found', 404);
+  if (active && !tournament.presentationVideoPath) throw new ServiceError('Bitte zuerst ein MP4-Video auswählen');
+  await prisma.tournament.update({ where: { id: tournamentId }, data: { presentationVideoActive: active } });
   await emit(tournamentId);
 }
 

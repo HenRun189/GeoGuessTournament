@@ -178,7 +178,7 @@ export default function AdminPage() {
         return <section key={row.unit.id} role="alert" aria-live="assertive" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-amber-400 bg-amber-950/80 px-4 py-3 text-amber-50 shadow-lg shadow-amber-950/40"><div><div className="font-black uppercase tracking-wide">PROBLEM: {row.unit.name}</div>{row.unit.kind === 'team' && <div className="text-sm">{row.unit.members.map((member) => member.name).join(' & ')}</div>}<div className="mt-1 text-sm">{problem.message}</div></div><button className="btn-secondary" onClick={() => void api.resolveProblem(state.id, row.unit.id).then(() => setFlash('Problemmeldung als erledigt markiert.')).catch((error) => setFlash(error instanceof Error ? error.message : 'Aktion fehlgeschlagen'))}>Als erledigt markieren</button></section>;
       })}
 
-      {state.presentation.active && <div className="fixed inset-x-0 bottom-4 z-40 flex flex-wrap items-center justify-center gap-2 px-4"><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, -1)}>← ZURÜCK</button><span className="rounded-lg bg-slate-950/95 px-3 py-2 text-sm font-bold text-white">Folie {state.presentation.currentIndex + 1} / {activeDeck?.slides.length ?? 0}</span><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, 1)}>WEITER →</button><button className="btn-danger shadow-lg" onClick={() => void api.setPresentationActive(state.id, false)}>PRÄSENTATION BEENDEN</button></div>}
+      {(state.presentation.active || state.presentationVideo?.active) && <div className="fixed inset-x-0 bottom-4 z-40 flex flex-wrap items-center justify-center gap-2 px-4">{state.presentation.active && <><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, -1)}>← ZURÜCK</button><span className="rounded-lg bg-slate-950/95 px-3 py-2 text-sm font-bold text-white">Folie {state.presentation.currentIndex + 1} / {activeDeck?.slides.length ?? 0}</span><button className="btn-secondary shadow-lg" onClick={() => void api.navigatePresentation(state.id, 1)}>WEITER →</button><button className="btn-danger shadow-lg" onClick={() => void api.setPresentationActive(state.id, false)}>PRÄSENTATION BEENDEN</button></>}{state.presentationVideo?.active && <button className="btn-danger shadow-lg" onClick={() => void api.setPresentationVideoActive(state.id, false)}>MP4 STOPPEN</button>}</div>}
 
       {/* state controls */}
       <div className="card mb-4 flex flex-wrap gap-2">
@@ -321,6 +321,9 @@ export default function AdminPage() {
             onSelect={(deckId) => { setSavedDeckId(deckId); if (state.presentation.decks.some((deck) => deck.id === deckId)) void api.selectPresentationDeck(state.id, deckId); }}
             selectedDeckId={savedDeckId ?? state.presentation.activeDeckId}
             active={state.presentation.active}
+            video={state.presentationVideo}
+            onUploadVideo={async (file) => { await api.uploadPresentationVideo(state.id, file); }}
+            onSetVideoActive={async (active) => { await api.setPresentationVideoActive(state.id, active); }}
             onDeleteDeck={async (deckId) => {
               const nextDecks = presentationDecks.filter((deck) => deck.id !== deckId);
               setPresentationDecks(nextDecks);
@@ -345,10 +348,11 @@ export default function AdminPage() {
                   <div className="flex -space-x-2">{row.unit.members.map((member) => member.imageUrl ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-8 w-8 rounded-full border-2 border-slate-900 object-cover" /> : <span key={member.id} title={member.name} className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-xs font-bold">{member.name.slice(0, 1)}</span>)}</div>
                   <h3 className="font-bold">{row.unit.name}</h3>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                   <span className={`rounded px-2 py-0.5 font-bold ${row.active ? 'bg-red-600 text-white' : row.eliminated ? 'bg-slate-700 text-slate-300' : row.unit.readiness === 'in_game' ? 'bg-emerald-500/20 text-emerald-200' : row.unit.readiness === 'ready' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-800 text-slate-300'}`}>{row.active ? 'DU BIST DRAN' : row.eliminated ? 'AUSGESCHIEDEN' : row.unit.readiness === 'in_game' ? 'IN GEOGUESSR' : row.unit.readiness === 'ready' ? 'BEREIT' : 'WARTET'}</span>
                   {row.unit.readiness === 'ready' && <span className="text-emerald-300">Bereit ✓</span>}
                   {row.unit.readiness === 'in_game' && <span className="text-emerald-200">Im Spiel ✓</span>}
+                  {row.unit.readiness !== 'waiting' && row.upcoming && <button className="btn-ghost px-2 py-0.5 text-[10px]" onClick={() => void api.setReadiness(state.id, row.unit.id, 'waiting').catch((cause) => setFlash(cause instanceof Error ? cause.message : 'Status konnte nicht zurückgesetzt werden'))}>Status zurücksetzen</button>}
                 </div>
                 {row.unit.kind === 'team' && <div className="text-xs text-slate-400">{row.unit.members.map((member) => member.name).join(' & ')}</div>}
                 <div className="mt-1"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${row.active ? 'bg-red-600 text-white' : row.upcoming && row.waitingBefore === 0 ? 'bg-amber-400 text-slate-950' : row.eliminated ? 'bg-slate-700 text-slate-300' : 'bg-slate-800 text-slate-300'}`}>{row.status}</span></div>

@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { TournamentStateDTO } from '@gt/shared';
 import { prisma } from '../src/services/db.js';
-import { createTournament, saveResult, editResult, undoLastResult, setTournamentState, resetTournament, setCurrentMatch, sendManualPing, setReadiness, reportProblem, resolveProblem, uploadParticipantImage, removeParticipantImage, updatePresentationDecks, selectPresentationDeck, navigatePresentation, setPresentationActive } from '../src/services/mutations.js';
+import { createTournament, saveResult, editResult, undoLastResult, setTournamentState, resetTournament, setCurrentMatch, sendManualPing, setReadiness, reportProblem, resolveProblem, uploadParticipantImage, removeParticipantImage, updatePresentationDecks, selectPresentationDeck, navigatePresentation, setPresentationActive, uploadPresentationVideo,  setPresentationVideoActive, deleteTournament } from '../src/services/mutations.js';
 import { addClient, broadcast } from '../src/services/db.js';
 import { consumeActivationOnce } from '@gt/shared';
 import { getTournamentState } from '../src/services/state.js';
@@ -69,6 +69,9 @@ describe('tournament lifecycle across all sizes', () => {
   const created: string[] = [];
 
   afterAll(async () => {
+    for (const id of created) {
+      try { await deleteTournament(id); } catch { /* test-only placeholder or already removed */ }
+    }
     await prisma.$disconnect();
   });
 
@@ -308,6 +311,11 @@ describe('tournament lifecycle across all sizes', () => {
       state = await getTournamentState(id);
       expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('in_game');
       expect(events.some((event) => event.type === 'state' && event.state?.units.find((unit) => unit.id === match.aUnitId)?.readiness === 'in_game')).toBe(true);
+      await setReadiness(id, match.aUnitId!, 'waiting');
+      state = await getTournamentState(id);
+      expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('waiting');
+      expect(state.units.find((unit) => unit.id === match.aUnitId)?.readinessMatchId).toBeNull();
+      expect(state.matches).toEqual(beforeReady.matches);
       await saveResult(id, match.id, { winnerUnitId: match.aUnitId!, aDamageDealt: 500, bDamageDealt: 400 });
       state = await getTournamentState(id);
       expect(state.units.find((unit) => unit.id === match.aUnitId)?.readiness).toBe('waiting');
@@ -367,6 +375,42 @@ describe('tournament lifecycle across all sizes', () => {
       expect((await getTournamentState(id)).presentation.active).toBe(false);
       await expect(updatePresentationDecks(id, [decks[0], decks[0]])).rejects.toThrow(/eindeutig/);
       await expect(navigatePresentation(id, 1)).rejects.toThrow(/nicht aktiv/);
+    } finally { remove(); }
+  });
+
+  it('uploads and toggles a bounded shared MP4 without changing presentation or tournament progression', async () => {
+    const id = await createTournament({ name: 'Shared video', participantCount: 4, participants: individualParticipants(4) });
+    created.push(id);
+    await setTournamentState(id, 'PRELIMINARY');
+    const initial = await getTournamentState(id);
+    const match = initial.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
+    await setCurrentMatch(id, match.id);
+    const beforePlayback = await getTournamentState(id);
+    const slides = beforePlayback.presentation.decks;
+    const events: { type?: string; state?: TournamentStateDTO }[] = [];
+    const remove = addClient(id, (chunk) => {
+      const data = chunk.match(/^data: (.+)$/m)?.[1];
+      if (data) events.push(JSON.parse(data) as typeof events[number]);
+    });
+    try {
+      const mp4 = Buffer.alloc(32);
+      mp4.write('ftyp', 4, 'ascii');
+      await uploadPresentationVideo(id, mp4);
+      let state = await getTournamentState(id);
+      expect(state.presentationVideo?.active).toBe(false);
+      expect(state.presentationVideo?.url.startsWith('/api/uploads/presentation_')).toBe(true);
+      expect(state.presentationVideo?.url.endsWith('.mp4')).toBe(true);
+      expect(state.presentation.decks).toEqual(slides);
+      await expect(uploadPresentationVideo(id, Buffer.from('not an mp4'))).rejects.toThrow(/MP4/);
+      await setPresentationVideoActive(id, true);
+      state = await getTournamentState(id);
+      expect(state.presentationVideo?.active).toBe(true);
+      expect(state.currentMatchId).toBe(match.id);
+      expect(state.matches).toEqual(beforePlayback.matches);
+      expect(events.some((event) => event.type === 'state' && event.state?.presentationVideo?.active)).toBe(true);
+      await setPresentationVideoActive(id, false);
+      expect((await getTournamentState(id)).presentationVideo?.active).toBe(false);
+      await expect(setPresentationVideoActive('missing', true)).rejects.toThrow(/not found/i);
     } finally { remove(); }
   });
 

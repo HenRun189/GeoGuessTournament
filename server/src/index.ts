@@ -9,15 +9,21 @@ import { api } from './routes/api.js';
 
 const app = express();
 app.use(cors());
+// Install the bounded raw parser before JSON, only on the MP4 binary endpoint.
+app.use('/api/tournaments/:id/presentation/video', express.raw({ type: 'application/octet-stream', limit: '100mb' }));
 app.use(express.json({ limit: '6mb' }));
 
 const uploadRoot = fileURLToPath(new URL('../uploads/', import.meta.url));
 app.get('/api/uploads/:filename', (req, res, next) => {
-  if (!/^profile_[a-zA-Z0-9_-]+\.(png|jpg|webp)$/.test(req.params.filename)) {
+  if (!/^(profile_[a-zA-Z0-9_-]+\.(png|jpg|webp)|presentation_[a-zA-Z0-9_-]+\.mp4)$/.test(req.params.filename)) {
     res.status(404).end();
     return;
   }
   const imagePath = join(uploadRoot, basename(req.params.filename));
+  if (req.params.filename.endsWith('.mp4')) {
+    res.type('video/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+  }
   res.sendFile(imagePath, (error) => {
     if (error) next(error);
   });
@@ -31,7 +37,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     return;
   }
   if (parserError?.type === 'entity.too.large' || parserError?.status === 413) {
-    res.status(413).json({ error: 'Anfrage ist zu groß' });
+    res.status(413).json({ error: 'Anfrage ist zu groß (MP4 maximal 100 MB)' });
     return;
   }
   const serviceError = error instanceof ServiceError ? error : null;

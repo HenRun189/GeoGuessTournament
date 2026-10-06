@@ -8,6 +8,7 @@ import type { MatchDTO, PlayerViewDTO, TournamentStateDTO } from '@gt/shared';
 import { consumeActivationOnce, DISCORD_HELP_TEXT } from '@gt/shared';
 import { api, unitName, useTournamentState } from '../lib/api';
 import MatchSpotlight, { useResultScreenActive } from '../components/MatchSpotlight';
+import FullscreenVideo from '../components/FullscreenVideo';
 
 // ---- tournament notification audio (Web Audio API) -------------------------
 let ctx: AudioContext | null = null;
@@ -170,6 +171,8 @@ export default function PlayerPage() {
     return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
   }, []);
 
+  if (state?.presentationVideo?.active) return <FullscreenVideo video={state.presentationVideo} />;
+
   if (state?.presentation.active) {
     const deck = state.presentation.decks.find((item) => item.id === state.presentation.activeDeckId) ?? state.presentation.decks[0];
     const slide = deck?.slides[state.presentation.currentIndex];
@@ -218,7 +221,7 @@ export default function PlayerPage() {
     : state.standings.find((row) => row.unitId === view.playerId)?.position ?? null) : null;
   const report = ownUnit?.problemReport ?? null;
   const displayStatus = status === 'dran' ? 'DU BIST DRAN' : status === 'eliminated' ? 'AUSGESCHIEDEN' : view.readiness === 'in_game' ? 'IN GEOGUESSR' : view.readiness === 'ready' ? 'BEREIT' : status === 'next' ? 'ALS NÄCHSTES DRAN' : status === 'played' ? 'SPIELE BEENDET' : 'WARTET';
-  const submitReadiness = async (readiness: 'ready' | 'in_game') => {
+  const submitReadiness = async (readiness: 'waiting' | 'ready' | 'in_game') => {
     if (!tournamentId || !view) return;
     setSendingReadiness(true);
     setActionError(null);
@@ -283,6 +286,7 @@ export default function PlayerPage() {
           <button disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('ready')} className={view.readiness === 'ready' ? 'btn-primary py-3' : 'btn-secondary py-3'}>ICH BIN BEREIT</button>
           <button disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('in_game')} className={view.readiness === 'in_game' ? 'btn-primary py-3' : 'btn-secondary py-3'}>ICH BIN IN GEOGUESSR</button>
         </div>
+        {view.readiness !== 'waiting' && <button className="btn-ghost mt-2 w-full py-2 text-sm" disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('waiting')}>STATUS ZURÜCKNEHMEN</button>}
         {actionError && <p role="alert" className="mt-2 text-sm text-red-300">{actionError}</p>}
         <p className="mt-2 text-xs text-slate-500">Dieser Status ändert den Turnier- oder Spielstand nicht.</p>
       </section>

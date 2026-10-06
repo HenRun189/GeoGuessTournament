@@ -23,6 +23,8 @@ model Tournament {
   presentationActive Boolean @default(false)
   presentationIndex Int     @default(0)
   presentationDeckId String @default("tournament-intro")
+  presentationVideoPath String?
+  presentationVideoActive Boolean @default(false)
   resultScreenMatchId String?
   resultScreenUntil DateTime?
   createdAt        DateTime @default(now())

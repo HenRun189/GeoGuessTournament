@@ -17,7 +17,77 @@ body {
 }
 
 .overlay-root {
+  display: grid;
+  place-items: center;
   background: transparent;
+}
+
+.overlay-frame {
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: min(100vh, calc(100vw * 9 / 16));
+}
+
+.overlay-panel {
+  min-height: 0;
+}
+
+.overlay-row > span {
+  min-width: 0;
+}
+
+.spotlight-shell {
+  animation: spotlight-enter 650ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.spotlight-side {
+  animation: spotlight-side-enter 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.spotlight-side:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.winner-avatar {
+  animation: winner-glow 1.8s ease-in-out infinite alternate;
+}
+
+.champion-shell {
+  border-color: rgb(251 191 36 / 0.75);
+  box-shadow: 0 0 70px rgb(245 158 11 / 0.2);
+}
+
+@keyframes spotlight-enter {
+  from { opacity: 0; transform: translateY(18px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes spotlight-side-enter {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes winner-glow {
+  from { filter: drop-shadow(0 0 0 rgb(251 191 36 / 0)); }
+  to { filter: drop-shadow(0 0 12px rgb(251 191 36 / 0.65)); }
+}
+
+@keyframes champion-flash {
+  0% { box-shadow: 0 0 0 rgb(245 158 11 / 0); }
+  45% { box-shadow: 0 0 90px rgb(245 158 11 / 0.35); }
+  100% { box-shadow: 0 0 34px rgb(245 158 11 / 0.14); }
+}
+
+.champion-shell {
+  animation: spotlight-enter 650ms cubic-bezier(0.2, 0.8, 0.2, 1) both, champion-flash 1.4s ease-out 500ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-shell,
+  .spotlight-side,
+  .winner-avatar,
+  .champion-shell {
+    animation: none;
+  }
 }
 
 .card {

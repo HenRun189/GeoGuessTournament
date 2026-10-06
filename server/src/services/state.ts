@@ -318,6 +318,9 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
         return DEFAULT_PRESENTATION_DECKS;
       })(),
     },
+    presentationVideo: t.presentationVideoPath
+      ? { url: `/api/uploads/${t.presentationVideoPath}`, active: t.presentationVideoActive }
+      : null,
     resultScreen: t.resultScreenMatchId && t.resultScreenUntil && t.resultScreenUntil.getTime() > Date.now()
       ? { matchId: t.resultScreenMatchId, until: t.resultScreenUntil.toISOString() }
       : null,

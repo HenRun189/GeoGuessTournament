@@ -119,6 +119,11 @@ export interface ResultScreenDTO {
   until: string;
 }
 
+export interface PresentationVideoDTO {
+  url: string;
+  active: boolean;
+}
+
 export interface TournamentStateDTO {
   id: string;
   name: string;
@@ -135,6 +140,7 @@ export interface TournamentStateDTO {
   groupStandings: Record<string, StandingRowDTO[]>;
   knockout: KnockoutDTO | null;
   presentation: TournamentPresentationDTO;
+  presentationVideo: PresentationVideoDTO | null;
   resultScreen: ResultScreenDTO | null;
   settings: OverlaySettingsDTO;
   currentMatchId: string | null;

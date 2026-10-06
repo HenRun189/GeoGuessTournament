@@ -27,6 +27,8 @@ import {
   selectPresentationDeck,
   navigatePresentation,
   setPresentationActive,
+  uploadPresentationVideo,
+  setPresentationVideoActive,
   createDemoTournament,
 } from '../services/mutations.js';
 import { prisma } from '../services/db.js';
@@ -171,7 +173,7 @@ api.post(
   '/tournaments/:id/units/:unitId/readiness',
   handle(async (req) => {
     const readiness = req.body?.readiness;
-    if (readiness !== 'ready' && readiness !== 'in_game') throw new ServiceError('Ungültiger Bereitschaftsstatus');
+    if (readiness !== 'waiting' && readiness !== 'ready' && readiness !== 'in_game') throw new ServiceError('Ungültiger Bereitschaftsstatus');
     await setReadiness(req.params.id, req.params.unitId, readiness);
     return { ok: true };
   }),
@@ -261,6 +263,23 @@ api.post(
   '/tournaments/:id/presentation/deck',
   handle(async (req) => {
     await selectPresentationDeck(req.params.id, String(req.body?.deckId ?? ''));
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/presentation/video',
+  handle(async (req) => {
+    if (!Buffer.isBuffer(req.body)) throw new ServiceError('MP4-Upload muss als Binärdatei gesendet werden');
+    await uploadPresentationVideo(req.params.id, req.body);
+    return { ok: true };
+  }),
+);
+
+api.post(
+  '/tournaments/:id/presentation/video/active',
+  handle(async (req) => {
+    await setPresentationVideoActive(req.params.id, req.body?.active === true);
     return { ok: true };
   }),
 );

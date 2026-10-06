@@ -8,6 +8,7 @@ import StandingsTable from '../components/StandingsTable';
 import Bracket from '../components/Bracket';
 import MatchSpotlight, { useResultScreenActive } from '../components/MatchSpotlight';
 import { flagEmoji } from '../components/StandingsTable';
+import FullscreenVideo from '../components/FullscreenVideo';
 
 function Identity({ state, unitId }: { state: TournamentStateDTO; unitId: string | null }) {
   const unit = state.units.find((entry) => entry.id === unitId);
@@ -47,6 +48,8 @@ export default function TournamentPage() {
     );
   }
   if (!state) return <div className="mx-auto max-w-4xl px-4 py-10 text-slate-400">Laden…</div>;
+
+  if (state.presentationVideo?.active) return <FullscreenVideo video={state.presentationVideo} />;
 
   if (state.presentation.active) {
     const deck = state.presentation.decks.find((item) => item.id === state.presentation.activeDeckId) ?? state.presentation.decks[0];

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dbFile = join(here, '..', 'test.db');
+const dbFile = join(here, '..', 'prisma', 'test.db');
 if (existsSync(dbFile)) unlinkSync(dbFile);
 
 execSync('npx prisma db push --skip-generate', {
