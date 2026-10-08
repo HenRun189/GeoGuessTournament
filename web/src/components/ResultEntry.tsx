@@ -84,7 +84,7 @@ export default function ResultEntry({ state, matchId, onSaved, editing = false }
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="label">Schaden {unitName(state, a)}</label>
+          <label className="label">Von {unitName(state, a)} verursachter Schaden an Gegner</label>
           <input
             className="input table-cell-num text-lg"
             inputMode="numeric"
@@ -95,7 +95,7 @@ export default function ResultEntry({ state, matchId, onSaved, editing = false }
           />
         </div>
         <div>
-          <label className="label">Schaden {unitName(state, b)}</label>
+          <label className="label">Von {unitName(state, b)} verursachter Schaden an Gegner</label>
           <input
             className="input table-cell-num text-lg"
             inputMode="numeric"

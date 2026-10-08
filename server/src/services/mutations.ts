@@ -4,7 +4,9 @@ import type { PresentationDeckDTO, TournamentState, OverlayOverrideDTO, Stage } 
 import { DEFAULT_PRESENTATION_DECKS } from '@gt/shared';
 import { buildSchedule, buildUnits, formatInfo } from '@gt/engine';
 import { nanoid } from 'nanoid';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { hashAdminPassword } from './auth.js';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prisma, broadcast } from './db.js';
@@ -20,6 +22,7 @@ export interface CreateTournamentArgs {
   participants: { id?: string; name: string; country?: string | null; abbreviation?: string | null }[];
   teams?: { id?: string; name: string; country?: string | null; abbreviation?: string | null; memberIds: string[] }[] | null;
   isDemo?: boolean;
+  adminPassword: string;
 }
 
 async function emit(tournamentId: string): Promise<void> {
@@ -115,6 +118,7 @@ export async function createTournament(args: CreateTournamentArgs): Promise<stri
   }
   const name = args.name?.trim();
   if (!name) throw new ServiceError('Tournament name is required');
+  const adminPasswordHash = await hashAdminPassword(args.adminPassword);
 
   const participants = (args.participants ?? []).map((p) => ({ ...p, name: (p.name ?? '').trim() }));
   if (participants.length !== size) {
@@ -172,6 +176,7 @@ export async function createTournament(args: CreateTournamentArgs): Promise<stri
       participantCount: size,
       seed: schedule.seed,
       isDemo: args.isDemo ?? false,
+      adminPasswordHash,
       participants: {
         create: dbParticipants.map((p) => ({
           id: p.id,
@@ -604,7 +609,7 @@ export async function setTournamentState(tournamentId: string, state: Tournament
 }
 
 export async function resetTournament(tournamentId: string): Promise<void> {
-  await prisma.unit.updateMany({ where: { tournamentId }, data: { readiness: 'waiting', readinessMatchId: null, problemMessage: null, problemCreatedAt: null, problemResolved: false } });
+  await prisma.unit.updateMany({ where: { tournamentId }, data: { readiness: 'waiting', readinessMatchId: null, problemMessage: null, problemCreatedAt: null, problemResolved: false, problemWithdrawalTokenHash: null } });
   await prisma.$transaction([
     prisma.tournament.update({ where: { id: tournamentId }, data: { currentMatchId: null } }),
     prisma.matchResult.deleteMany({ where: { match: { tournamentId } } }),
@@ -765,22 +770,36 @@ export async function setReadiness(tournamentId: string, unitId: string, readine
   await emit(tournamentId);
 }
 
-export async function reportProblem(tournamentId: string, unitId: string, message: string): Promise<void> {
+export async function reportProblem(tournamentId: string, unitId: string, message: string): Promise<{ withdrawalToken: string }> {
   const text = message.trim();
   if (!text || text.length > 300) throw new ServiceError('Bitte eine Problembeschreibung mit höchstens 300 Zeichen eingeben');
   const unit = await prisma.unit.findFirst({ where: { id: unitId, tournamentId }, select: { id: true } });
   if (!unit) throw new ServiceError('Player or team not found', 404);
+  const withdrawalToken = randomBytes(32).toString('hex');
+  const problemWithdrawalTokenHash = createHash('sha256').update(withdrawalToken).digest('hex');
   await prisma.unit.update({
     where: { id: unitId },
-    data: { problemMessage: text, problemCreatedAt: new Date(), problemResolved: false },
+    data: { problemMessage: text, problemCreatedAt: new Date(), problemResolved: false, problemWithdrawalTokenHash },
   });
+  await emit(tournamentId);
+  return { withdrawalToken };
+}
+
+export async function withdrawProblem(tournamentId: string, unitId: string, withdrawalToken: string): Promise<void> {
+  if (!/^[0-9a-f]{64}$/i.test(withdrawalToken)) throw new ServiceError('Berechtigung zum Zurücknehmen fehlt', 403);
+  const tokenHash = createHash('sha256').update(withdrawalToken).digest('hex');
+  const unit = await prisma.unit.findFirst({ where: { id: unitId, tournamentId }, select: { id: true, problemResolved: true, problemMessage: true, problemWithdrawalTokenHash: true } });
+  if (!unit?.problemMessage || unit.problemResolved) throw new ServiceError('Nur offene Problemmeldungen können zurückgenommen werden', 409);
+  const expected = unit.problemWithdrawalTokenHash;
+  if (!expected || expected.length !== tokenHash.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(tokenHash))) throw new ServiceError('Berechtigung zum Zurücknehmen ungültig', 403);
+  await prisma.unit.update({ where: { id: unitId }, data: { problemMessage: null, problemCreatedAt: null, problemResolved: false, problemWithdrawalTokenHash: null } });
   await emit(tournamentId);
 }
 
 export async function resolveProblem(tournamentId: string, unitId: string): Promise<void> {
   const unit = await prisma.unit.findFirst({ where: { id: unitId, tournamentId, problemMessage: { not: null } } });
   if (!unit) throw new ServiceError('Offene Problemmeldung nicht gefunden', 404);
-  await prisma.unit.update({ where: { id: unitId }, data: { problemResolved: true } });
+  await prisma.unit.update({ where: { id: unitId }, data: { problemResolved: true, problemWithdrawalTokenHash: null } });
   await emit(tournamentId);
 }
 
@@ -890,6 +909,7 @@ export async function updateOverlaySettings(
   patch: Partial<{
     autoRotation: boolean;
     rotationIntervalSec: number;
+    rotationViews: string[];
     showLogo: boolean;
     showTournamentName: boolean;
     showFlags: boolean;
@@ -904,6 +924,8 @@ export async function updateOverlaySettings(
   if (typeof patch.autoRotation === 'boolean') data.autoRotation = patch.autoRotation;
   if (typeof patch.rotationIntervalSec === 'number' && patch.rotationIntervalSec >= 5 && patch.rotationIntervalSec <= 300) {
     data.rotationIntervalSec = Math.round(patch.rotationIntervalSec);
+  } else if (patch.rotationIntervalSec !== undefined) {
+    throw new ServiceError('Das Wechselintervall muss zwischen 5 und 300 Sekunden liegen');
   }
   if (typeof patch.showLogo === 'boolean') data.showLogo = patch.showLogo;
   if (typeof patch.showTournamentName === 'boolean') data.showTournamentName = patch.showTournamentName;
@@ -911,6 +933,12 @@ export async function updateOverlaySettings(
   if (typeof patch.compact === 'boolean') data.compact = patch.compact;
   if (typeof patch.transparent === 'boolean') data.transparent = patch.transparent;
   if (patch.theme === 'dark' || patch.theme === 'light') data.theme = patch.theme;
+  if (Array.isArray(patch.rotationViews)) {
+    const allowedViews = ['next_matches', 'all_matches', 'table', 'bracket', 'current_match', 'presentation'];
+    const views = [...new Set(patch.rotationViews.filter((view) => allowedViews.includes(view)))];
+    if (views.length === 0) throw new ServiceError('Mindestens eine Overlay-Ansicht für die Rotation wählen');
+    data.rotationViews = JSON.stringify(views);
+  }
   await prisma.tournamentSettings.upsert({
     where: { tournamentId },
     create: { tournamentId, ...data },
@@ -921,7 +949,7 @@ export async function updateOverlaySettings(
 
 
 export async function setOverlayMode(tournamentId: string, mode: OverlayOverrideDTO['mode']): Promise<void> {
-  const allowed = ['auto', 'next_matches', 'table', 'bracket', 'current_match', 'result_screen', 'presentation'];
+  const allowed = ['auto', 'next_matches', 'all_matches', 'table', 'bracket', 'current_match', 'result_screen', 'presentation'];
   if (!allowed.includes(mode)) throw new ServiceError(`Invalid overlay mode: ${mode}`);
   await prisma.tournamentSettings.upsert({
     where: { tournamentId },
@@ -938,7 +966,7 @@ const DEMO_NAMES = [
   'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima',
 ];
 
-export async function createDemoTournament(kind: 'full' | 'team' | 'groups'): Promise<string> {
+export async function createDemoTournament(kind: 'full' | 'team' | 'groups', adminPassword: string): Promise<string> {
   const sizes: Record<string, number> = { full: 7, team: 8, groups: 6 };
   const size = sizes[kind] ?? 7;
   const participants = DEMO_NAMES.slice(0, size).map((n) => ({ name: `Player ${n}` }));
@@ -957,6 +985,7 @@ export async function createDemoTournament(kind: 'full' | 'team' | 'groups'): Pr
       participants: pre,
       teams,
       isDemo: true,
+      adminPassword,
     });
     await fillDemoResults(tid);
     return tid;
@@ -966,6 +995,7 @@ export async function createDemoTournament(kind: 'full' | 'team' | 'groups'): Pr
     participantCount: size,
     participants,
     isDemo: true,
+    adminPassword,
   });
   await fillDemoResults(tid);
   return tid;

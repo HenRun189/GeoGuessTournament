@@ -9,6 +9,7 @@ export default function HomePage() {
   const [tournaments, setTournaments] = useState<TournamentSummaryDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [demoPassword, setDemoPassword] = useState('');
   const navigate = useNavigate();
 
   const load = () => {
@@ -24,7 +25,8 @@ export default function HomePage() {
     setBusy(true);
     setError(null);
     try {
-      const { id } = await api.createDemo(kind);
+      const { id } = await api.createDemo(kind, demoPassword);
+      setDemoPassword('');
       navigate(`/admin/${id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Demoeinstellung fehlgeschlagen');
@@ -45,6 +47,16 @@ export default function HomePage() {
     }
   };
 
+  const deleteOneDemo = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.deleteTournament(id);
+      setTournaments((rows) => rows.filter((row) => row.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen');
+    } finally { setBusy(false); }
+  };
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
       <div className="mb-8 flex items-end justify-between">
@@ -62,23 +74,25 @@ export default function HomePage() {
 
       <div className="card mb-6">
         <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Demomodus</div>
+        <label className="label" htmlFor="demo-admin-password">Admin-Passwort für das Demo-Turnier (mindestens 10 Zeichen)</label>
+        <input id="demo-admin-password" className="input mb-3 max-w-md" type="password" autoComplete="new-password" value={demoPassword} onChange={(event) => setDemoPassword(event.target.value)} />
         <div className="flex flex-wrap gap-2">
           <button
-            disabled={busy}
+            disabled={busy || demoPassword.length < 10}
             onClick={() => void createDemo('full')}
             className="btn-secondary"
           >
             Demo erstellen (7 Spieler, fertig)
           </button>
           <button
-            disabled={busy}
+            disabled={busy || demoPassword.length < 10}
             onClick={() => void createDemo('team')}
             className="btn-secondary"
           >
             Demo erstellen (8 → 4 Teams, fertig)
           </button>
           <button
-            disabled={busy}
+            disabled={busy || demoPassword.length < 10}
             onClick={() => void createDemo('groups')}
             className="btn-secondary"
           >
@@ -86,7 +100,18 @@ export default function HomePage() {
           </button>
           <button
             disabled={busy}
-            onClick={() => void deleteDemo()}
+            onClick={async () => {
+              const demos = tournaments.filter((tournament) => tournament.isDemo);
+              if (!demos.length) return;
+              try {
+                for (const tournament of demos) {
+                  const password = window.prompt(`Admin-Passwort für „${tournament.name}“`);
+                  if (!password) return;
+                  await api.loginAdmin(tournament.id, password);
+                }
+                await deleteDemo();
+              } catch (e) { setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen'); }
+            }}
             className="btn-danger"
           >
             Alle Demo-Turniere löschen
@@ -135,11 +160,11 @@ export default function HomePage() {
                 Overlay
               </Link>
               <button className="btn-danger" disabled={busy} onClick={async () => {
-                if (!window.confirm(`Turnier „${t.name}“ wirklich löschen? Alle zugehörigen Turnierdaten und Spielerbilder werden entfernt.`)) return;
-                setBusy(true); setError(null);
-                try { await api.deleteTournament(t.id); setTournaments((rows) => rows.filter((row) => row.id !== t.id)); }
+                if (!window.confirm(`Admin-Passwort für „${t.name}“ eingeben, um dieses Turnier zu löschen?`)) return;
+                const password = window.prompt('Admin-Passwort');
+                if (!password) return;
+                try { await api.loginAdmin(t.id, password); await api.deleteTournament(t.id); setTournaments((rows) => rows.filter((row) => row.id !== t.id)); }
                 catch (e) { setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen'); }
-                finally { setBusy(false); }
               }}>Löschen</button>
             </div>
           </div>

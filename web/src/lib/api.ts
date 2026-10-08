@@ -5,6 +5,7 @@ import type { PlayerViewDTO, TournamentStateDTO, TournamentSummaryDTO, ServerEve
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     ...init,
   });
@@ -17,13 +18,18 @@ export const api = {
   listTournaments: () => request<{ tournaments: TournamentSummaryDTO[] }>('/tournaments'),
   getTournament: (id: string) => request<TournamentStateDTO>(`/tournaments/${id}`),
   createTournament: (body: unknown) => request<{ id: string }>('/tournaments', { method: 'POST', body: JSON.stringify(body) }),
+  loginAdmin: (id: string, password: string) => request<{ authenticated: boolean; expiresAt: string }>(`/tournaments/${id}/admin-session`, { method: 'POST', body: JSON.stringify({ password }) }),
+  checkAdmin: (id: string) => request<{ authenticated: boolean }>(`/tournaments/${id}/admin-session`),
+  logoutAdmin: (id: string) => request<{ ok: boolean }>(`/tournaments/${id}/admin-session`, { method: 'DELETE' }),
   setState: (id: string, state: string) => request(`/tournaments/${id}/state`, { method: 'POST', body: JSON.stringify({ state }) }),
   reset: (id: string) => request(`/tournaments/${id}/reset`, { method: 'POST' }),
   deleteTournament: (id: string) => request(`/tournaments/${id}`, { method: 'DELETE' }),
   setReadiness: (id: string, unitId: string, readiness: 'waiting' | 'ready' | 'in_game') =>
     request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/readiness`, { method: 'POST', body: JSON.stringify({ readiness }) }),
   reportProblem: (id: string, unitId: string, message: string) =>
-    request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem`, { method: 'POST', body: JSON.stringify({ message }) }),
+    request<{ withdrawalToken: string }>(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem`, { method: 'POST', body: JSON.stringify({ message }) }),
+  withdrawProblem: (id: string, unitId: string, withdrawalToken: string) =>
+    request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem/withdraw`, { method: 'POST', body: JSON.stringify({ withdrawalToken }) }),
   resolveProblem: (id: string, unitId: string) =>
     request(`/tournaments/${id}/units/${encodeURIComponent(unitId)}/problem/resolve`, { method: 'POST' }),
   uploadParticipantImage: (id: string, participantId: string, mimeType: string, dataBase64: string) =>
@@ -53,6 +59,7 @@ export const api = {
   uploadPresentationVideo: async (id: string, file: File) => {
     const res = await fetch(`/api/tournaments/${id}/presentation/video`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     });
@@ -63,7 +70,7 @@ export const api = {
     request(`/tournaments/${id}/presentation/video/active`, { method: 'POST', body: JSON.stringify({ active }) }),
   navigatePresentation: (id: string, direction: -1 | 1) =>
     request(`/tournaments/${id}/presentation/navigate`, { method: 'POST', body: JSON.stringify({ direction }) }),
-  createDemo: (kind: 'full' | 'team' | 'groups') => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind }) }),
+  createDemo: (kind: 'full' | 'team' | 'groups', adminPassword: string) => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind, adminPassword }) }),
   playerImageUrl: (imageUrl: string | null) => imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(imageUrl)}` : null,
   deleteDemo: () => request<{ removed: number }>('/demo', { method: 'DELETE' }),
 };

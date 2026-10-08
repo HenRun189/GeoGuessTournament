@@ -332,7 +332,16 @@ export async function getTournamentState(tournamentId: string): Promise<Tourname
       showFlags: t.settings?.showFlags ?? true,
       compact: t.settings?.compact ?? false,
       transparent: t.settings?.transparent ?? true,
-      theme: (t.settings?.theme ?? 'dark') as 'dark' | 'light',
+      rotationViews: (() => {
+        const defaults: TournamentStateDTO['settings']['rotationViews'] = ['next_matches', 'all_matches', 'table', 'presentation'];
+        try {
+          const views: unknown = JSON.parse(t.settings?.rotationViews ?? JSON.stringify(defaults));
+          const allowed: TournamentStateDTO['settings']['rotationViews'] = ['next_matches', 'all_matches', 'table', 'bracket', 'current_match', 'presentation'];
+          const valid = Array.isArray(views) ? views.filter((view): view is typeof allowed[number] => typeof view === 'string' && allowed.includes(view as typeof allowed[number])) : [];
+          return valid.length ? [...new Set(valid)] : defaults;
+        } catch { return defaults; }
+      })(),
+      theme: 'dark',
       overlayMode: (t.settings?.overlayMode ?? 'auto') as TournamentStateDTO['settings']['overlayMode'],
     },
     currentMatchId: t.currentMatchId,

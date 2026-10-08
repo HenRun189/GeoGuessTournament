@@ -20,7 +20,7 @@ export default function MatchSpotlight({ state, match, overlay = false }: { stat
   const tournamentChampion = match.stage === 'FINAL' && state.knockout?.championUnitId === winnerId;
   const side = (unitId: string, damage: number, won: boolean) => {
     const unit = state.units.find((entry) => entry.id === unitId);
-    return <div className={`spotlight-side flex min-w-0 flex-1 flex-col items-center rounded-2xl border p-3 sm:p-5 ${won ? 'border-amber-400/70 bg-amber-400/10 shadow-xl shadow-amber-950/30' : 'border-slate-700 bg-slate-950/70'}`}>
+    return <div className={`spotlight-side flex min-w-0 flex-1 flex-col items-center rounded-2xl border p-3 sm:p-5 ${won ? 'border-emerald-500/50 bg-emerald-500/[0.08] shadow-xl shadow-emerald-950/20' : 'border-rose-500/35 bg-rose-500/[0.06]'}`}>
       <div className={`mb-2 flex -space-x-3 ${won ? 'winner-avatar' : ''}`}>{unit?.members.map((member) => member.imageUrl
         ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-14 w-14 rounded-full border-2 border-slate-900 object-cover sm:h-20 sm:w-20" />
         : <span key={member.id} title={member.name} className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-xl font-black text-emerald-300 sm:h-20 sm:w-20">{member.name.slice(0, 1).toUpperCase()}</span>)}</div>
@@ -29,7 +29,7 @@ export default function MatchSpotlight({ state, match, overlay = false }: { stat
       <div className="mt-2 font-mono text-xl font-black tabular-nums sm:text-3xl">{damage}</div>
       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Schaden ausgeteilt</div>
       <div className="mt-1 text-[10px] font-semibold text-slate-500 sm:text-xs">Eingesteckt: {unitId === match.aUnitId ? result.bDamageDealt : result.aDamageDealt}</div>
-      <div className={`mt-3 text-sm font-black uppercase tracking-wider sm:text-base ${won ? 'text-amber-300' : 'text-slate-500'}`}>{won ? 'GEWONNEN' : 'ERGEBNIS'}</div>
+      <div className={`mt-3 text-sm font-black uppercase tracking-wider sm:text-base ${won ? 'text-emerald-300' : 'text-rose-300'}`}>{won ? 'GEWONNEN' : 'ERGEBNIS'}</div>
     </div>;
   };
 
@@ -44,6 +44,6 @@ export default function MatchSpotlight({ state, match, overlay = false }: { stat
       <div className="px-1 text-xs font-black uppercase tracking-widest text-slate-500 sm:text-lg">GEGEN</div>
       {side(match.bUnitId, result.bDamageDealt, winnerId === match.bUnitId)}
     </div>
-    <footer className="spotlight-footer mt-3 text-center sm:mt-5"><div className="text-[10px] font-bold uppercase tracking-[0.25em] text-amber-400">{tournamentChampion ? 'Turniersieger' : 'Sieger dieser Partie'}</div><div className="mt-1 text-lg font-black text-amber-200 sm:text-2xl">{unitName(state, winnerId)}</div>{winner?.members && <div className="mt-1 text-xs text-amber-100/80 sm:text-sm">{winner.members.map((member) => member.name).join(' & ')}</div>}</footer>
+    <footer className="spotlight-footer mt-3 text-center sm:mt-5"><div className="text-[10px] font-bold uppercase tracking-[0.25em] text-amber-400">{tournamentChampion ? 'Turniersieger' : 'Sieger dieser Partie'}</div><div className="mt-1 text-lg font-black text-emerald-200 sm:text-2xl">{unitName(state, winnerId)}</div>{winner?.members && <div className="mt-1 text-xs text-amber-100/80 sm:text-sm">{winner.members.map((member) => member.name).join(' & ')}</div>}</footer>
   </section>;
 }

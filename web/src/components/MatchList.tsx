@@ -56,7 +56,7 @@ export default function MatchList({ state, onSelectCurrent, onEdit, selectedMatc
                     </div>
                     {m.result && (
                       <div className="text-xs text-slate-400 table-cell-num">
-                        {m.result.aDamageDealt} – {m.result.bDamageDealt} Schaden · Sieger{' '}
+                        Ausgeteilt {m.result.aDamageDealt} – {m.result.bDamageDealt} · Erhalten {m.result.aDamageTaken} – {m.result.bDamageTaken} · Sieger{' '}
                         <span className="font-semibold text-emerald-400">{unitName(state, m.result.winnerUnitId)}</span>
                       </div>
                     )}

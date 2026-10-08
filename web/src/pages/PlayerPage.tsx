@@ -5,9 +5,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { MatchDTO, PlayerViewDTO, TournamentStateDTO } from '@gt/shared';
-import { consumeActivationOnce, DISCORD_HELP_TEXT } from '@gt/shared';
+import { buildPlayerMatchLists, consumeActivationOnce, DISCORD_HELP_TEXT } from '@gt/shared';
 import { api, unitName, useTournamentState } from '../lib/api';
 import MatchSpotlight, { useResultScreenActive } from '../components/MatchSpotlight';
+import StandingsTable from '../components/StandingsTable';
 import FullscreenVideo from '../components/FullscreenVideo';
 
 // ---- tournament notification audio (Web Audio API) -------------------------
@@ -142,6 +143,7 @@ export default function PlayerPage() {
   const [audioOn, setAudioOn] = useState(false);
   const [pingMessage, setPingMessage] = useState<string | null>(null);
   const [sendingReadiness, setSendingReadiness] = useState(false);
+  const [problemWithdrawalToken, setProblemWithdrawalToken] = useState<string | null>(null);
   const [problemOpen, setProblemOpen] = useState(false);
   const [problemText, setProblemText] = useState('');
   const [problemBusy, setProblemBusy] = useState(false);
@@ -163,6 +165,10 @@ export default function PlayerPage() {
     if (audioOn) playChime();
     return () => window.clearTimeout(timeout);
   }, [lastPing, unitId, audioOn]);
+
+  useEffect(() => {
+    try { setProblemWithdrawalToken(window.localStorage.getItem(`gt_problem_withdrawal_${tournamentId ?? ''}_${unitId ?? ''}`)); } catch { setProblemWithdrawalToken(null); }
+  }, [tournamentId, unitId]);
 
   useEffect(() => {
     const unlock = () => { void enableAudio().then(setAudioOn); };
@@ -229,24 +235,32 @@ export default function PlayerPage() {
     catch (e) { setActionError(e instanceof Error ? e.message : 'Status konnte nicht gespeichert werden'); }
     finally { setSendingReadiness(false); }
   };
+  const withdrawProblem = async () => {
+    if (!tournamentId || !view || !problemWithdrawalToken || report?.resolved) return;
+    setProblemBusy(true);
+    setActionError(null);
+    try {
+      await api.withdrawProblem(tournamentId, view.playerId, problemWithdrawalToken);
+      setProblemWithdrawalToken(null);
+      try { window.localStorage.removeItem(`gt_problem_withdrawal_${tournamentId}_${view.playerId}`); } catch { /* ignore storage errors */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : 'Meldung konnte nicht zurückgenommen werden'); }
+    finally { setProblemBusy(false); }
+  };
   const submitProblem = async () => {
     if (!tournamentId || !view || !problemText.trim()) return;
     setProblemBusy(true);
     setActionError(null);
-    try { await api.reportProblem(tournamentId, view.playerId, problemText.trim()); setProblemOpen(false); setProblemText(''); }
+    try { const result = await api.reportProblem(tournamentId, view.playerId, problemText.trim()); setProblemWithdrawalToken(result.withdrawalToken); try { window.localStorage.setItem(`gt_problem_withdrawal_${tournamentId}_${view.playerId}`, result.withdrawalToken); } catch { /* cancellation still works until page reload */ } setProblemOpen(false); setProblemText(''); }
     catch (e) { setActionError(e instanceof Error ? e.message : 'Meldung konnte nicht gesendet werden'); }
     finally { setProblemBusy(false); }
   };
-  const ordered = [...ownMatches].sort((a, b) =>
-    (a.stage === 'PRELIMINARY' ? 0 : a.stage === 'SEMIFINALS' ? 1 : 2) -
-    (b.stage === 'PRELIMINARY' ? 0 : b.stage === 'SEMIFINALS' ? 1 : 2) || a.orderInStage - b.orderInStage,
-  );
+  const matchLists = state ? buildPlayerMatchLists(state.matches, state.groups, view.playerId) : null;
   const gamesRemaining = gamesBeforeNext;
 
   return (
-    <main className="mx-auto min-h-screen max-w-xl px-4 py-6 sm:py-10">
+    <main className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:py-10">
       {/* header / share link (mobile friendly) */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="mx-auto flex max-w-5xl items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-black tracking-tight">{name}</h1>
           <div className="text-xs text-slate-500">
@@ -269,29 +283,26 @@ export default function PlayerPage() {
       </div>}
 
       {/* prominent status: recognizable immediately on mobile */}
-      <section aria-live="polite" className={`mt-5 rounded-2xl border p-5 text-center ${status === 'dran' ? 'border-red-500/70 bg-red-600/15' : status === 'next' ? 'border-amber-500/60 bg-amber-500/10' : status === 'eliminated' ? 'border-slate-700 bg-slate-900' : 'border-slate-800 bg-slate-900/70'}`}>
+      <section aria-live="polite" className={`mx-auto mt-5 max-w-4xl rounded-2xl border p-5 text-center ${status === 'dran' ? 'border-red-500/70 bg-red-600/15' : status === 'next' ? 'border-amber-500/60 bg-amber-500/10' : status === 'eliminated' ? 'border-slate-700 bg-slate-900' : 'border-slate-800 bg-slate-900/70'}`}>
         <div className={`text-sm font-black tracking-wide ${status === 'dran' ? 'text-red-300' : status === 'next' ? 'text-amber-300' : 'text-slate-200'}`}>
           {displayStatus}
         </div>
         {ownRank !== null && <p className="mt-1 text-xs text-slate-400">Aktueller Rang: {ownRank}. Platz</p>}
         {status === 'waiting' && <p className="mt-1 text-sm text-slate-400">Du bist im Spielplan eingeordnet.</p>}
+        <p className="mt-2 text-lg font-bold text-emerald-300">{gamesBeforeNext > 0 ? `Nächstes Spiel in: ${gamesBeforeNext} Spiel${gamesBeforeNext === 1 ? '' : 'en'}` : status === 'dran' ? 'Dein Spiel läuft jetzt.' : nextOwnMatch ? 'Du bist als Nächstes dran.' : 'Kein weiteres Spiel geplant.'}</p>
         {pingMessage && <p role="status" className="mt-3 rounded-lg bg-red-500/20 px-3 py-2 font-bold text-red-200">{pingMessage}</p>}
         {status === 'next' && <p className="mt-2 text-xs text-amber-200">Dein Spiel ist das nächste in der Reihenfolge.</p>}
         {status === 'dran' && nextOwnMatch && <div className="mt-3 text-xl font-black text-red-100">{unitNameFromState(nextOwnMatch.aUnitId)} <span className="text-red-300">vs</span> {unitNameFromState(nextOwnMatch.bUnitId)}</div>}
       </section>
 
-      <section className="mt-4 rounded-xl border border-emerald-700/40 bg-slate-900/70 p-4" aria-label="Bereitschaft">
+      <section className="mx-auto mt-4 max-w-4xl rounded-xl border border-emerald-700/40 bg-slate-900/70 p-4" aria-label="Bereitschaft">
         <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-300">Deine Bereitschaft</div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <button disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('ready')} className={view.readiness === 'ready' ? 'btn-primary py-3' : 'btn-secondary py-3'}>ICH BIN BEREIT</button>
-          <button disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('in_game')} className={view.readiness === 'in_game' ? 'btn-primary py-3' : 'btn-secondary py-3'}>ICH BIN IN GEOGUESSR</button>
-        </div>
-        {view.readiness !== 'waiting' && <button className="btn-ghost mt-2 w-full py-2 text-sm" disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('waiting')}>STATUS ZURÜCKNEHMEN</button>}
+        <button disabled={sendingReadiness || status === 'eliminated' || !nextOwnMatch} onClick={() => void submitReadiness('in_game')} className={`w-full py-3 ${view.readiness === 'in_game' ? 'btn-primary' : 'btn-secondary'}`}>{view.readiness === 'in_game' ? 'ICH BIN IN GEOGUESSR ✓' : 'ICH BIN IN GEOGUESSR'}</button>
         {actionError && <p role="alert" className="mt-2 text-sm text-red-300">{actionError}</p>}
         <p className="mt-2 text-xs text-slate-500">Dieser Status ändert den Turnier- oder Spielstand nicht.</p>
       </section>
 
-      <section className="mt-4 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+      <section className="mx-auto mt-4 max-w-4xl rounded-xl border border-slate-800 bg-slate-900/50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-slate-100">Benachrichtigungen</div>
@@ -307,11 +318,13 @@ export default function PlayerPage() {
         </div>
       </section>
 
-      {report && <section aria-live="polite" className={`mt-4 rounded-xl border p-3 ${report.resolved ? 'border-slate-800 bg-slate-900/50' : 'border-amber-500/50 bg-amber-500/10'}`}>
+      {report && <section aria-live="polite" className={`mx-auto mt-4 max-w-4xl rounded-xl border p-3 ${report.resolved ? 'border-slate-800 bg-slate-900/50' : 'border-amber-500/50 bg-amber-500/10'}`}>
         <div className="text-xs font-bold uppercase tracking-wider text-amber-300">{report.resolved ? 'Problemmeldung erledigt' : 'Deine Problemmeldung wurde gesendet'}</div>
-        <p className="mt-1 text-sm">{report.message}</p><p className="mt-2 text-xs text-slate-400">{DISCORD_HELP_TEXT}</p>
+        <p className="mt-1 text-sm">{report.message}</p>
+        <p className="mt-2 text-xs text-slate-400">{DISCORD_HELP_TEXT}</p>
+        {!report.resolved && problemWithdrawalToken && <button className="btn-secondary mt-3" disabled={problemBusy} onClick={() => void withdrawProblem()}>{problemBusy ? 'Wird zurückgenommen…' : 'MELDUNG ZURÜCKNEHMEN'}</button>}
       </section>}
-      <section className="mt-4 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+      <section className="mx-auto mt-4 max-w-4xl rounded-xl border border-slate-800 bg-slate-900/50 p-3">
         <button className="btn-danger w-full" onClick={() => setProblemOpen((open) => !open)}>{report && !report.resolved ? 'PROBLEM / HILFE · ERNEUT MELDEN' : 'PROBLEM / HILFE'}</button>
         {problemOpen && <div className="mt-3 space-y-2">
           <label className="label" htmlFor="problem-message">Was ist das Problem?</label>
@@ -330,41 +343,47 @@ export default function PlayerPage() {
         <div className="mt-1 text-sm text-slate-300">Gegner: <strong>{unitName(state, opponent(nextOwnMatch, view.playerId))}</strong></div>
       </section>}
 
-      {state && <div className="mt-6 space-y-5">
-        {state.groups.length > 0 && state.groups.map((group) => {
-          const isOwnGroup = group.unitIds.includes(view.playerId);
-          const fixtures = state.matches.filter((match) => match.stage === 'PRELIMINARY' && group.unitIds.includes(match.aUnitId ?? '') && group.unitIds.includes(match.bUnitId ?? ''));
-          return <MatchSection key={group.id} title={isOwnGroup ? 'Deine Gruppe' : `Andere Gruppe · ${group.name}`} matches={fixtures} ownUnitId={view.playerId} state={state} />;
-        })}
-        <MatchSection title="Deine Spiele · Ergebnisse & kommende Partien" matches={ordered} ownUnitId={view.playerId} state={state} />
+      {state && matchLists && state.groups.length >= 2 && matchLists.ownGroupId && matchLists.otherGroupId && <div className="mt-6 space-y-6">
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]"><div className="space-y-5"><MatchSection title="1 · Deine kommenden Spiele" matches={matchLists.ownUpcoming} ownUnitId={view.playerId} state={state} perspective="team" /><MatchSection title={`2 · Kommende Spiele deiner Gruppe · ${groups.find((group) => group.id === matchLists.ownGroupId)?.name}`} matches={matchLists.ownGroupUpcoming} ownUnitId={view.playerId} state={state} /></div><StandingsSection title={`3 · Tabelle deiner Gruppe · ${groups.find((group) => group.id === matchLists.ownGroupId)?.name}`} rows={state.groupStandings[matchLists.ownGroupId] ?? []} state={state} ownUnitId={view.playerId} /></div>
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]"><MatchSection title={`4 · Alle Spiele der anderen Gruppe · ${groups.find((group) => group.id === matchLists.otherGroupId)?.name}`} matches={matchLists.otherGroupMatches} ownUnitId={view.playerId} state={state} /><StandingsSection title={`5 · Tabelle der anderen Gruppe · ${groups.find((group) => group.id === matchLists.otherGroupId)?.name}`} rows={state.groupStandings[matchLists.otherGroupId] ?? []} state={state} ownUnitId={view.playerId} /></div>
+        <MatchSection title="6 · Deine vollständige Spielübersicht · Ergebnisse bleiben erhalten" matches={matchLists.ownComplete} ownUnitId={view.playerId} state={state} perspective="team" />
       </div>}
+      {state && matchLists && state.groups.length < 2 && <div className="mt-6 space-y-6"><div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]"><MatchSection title="Deine kommenden Spiele" matches={matchLists.ownUpcoming} ownUnitId={view.playerId} state={state} perspective="team" /><StandingsSection title="Tabellenstand" rows={state.standings} state={state} ownUnitId={view.playerId} /></div><MatchSection title="Alle übrigen Turnierspiele" matches={matchLists.otherMatches} ownUnitId={view.playerId} state={state} /><MatchSection title="Deine vollständige Spielübersicht · Ergebnisse bleiben erhalten" matches={matchLists.ownComplete} ownUnitId={view.playerId} state={state} perspective="team" /></div>}
 
       {/* note: this is your personal page, no admin tools here */}
       <div className="mt-6 text-center text-xs text-slate-600">
-        Deine Live-Ansicht — ohne Admin-Rechte. Updates kommen sofort per Live-Update. <Link to={`/rules?turnier=${encodeURIComponent(state?.id ?? tournamentId ?? '')}`} className="ml-1 text-emerald-300 underline">Turnierregeln</Link>
+        Deine Live-Ansicht — ohne Admin-Rechte. Updates kommen sofort per Live-Update. <Link to={`/rules?turnier=${encodeURIComponent(state?.id ?? tournamentId ?? '')}&spieler=${encodeURIComponent(view.playerId)}`} className="ml-1 text-emerald-300 underline">Turnierregeln</Link>
       </div>
     </main>
   );
 }
 
-function MatchSection({ title, matches, ownUnitId, state }: {
+function StandingsSection({ title, rows, state, ownUnitId }: { title: string; rows: TournamentStateDTO['standings']; state: TournamentStateDTO; ownUnitId: string }) {
+  return <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-3"><h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-emerald-300">{title}</h2><StandingsTable rows={rows} compact state={state} highlightUnitId={ownUnitId} /></section>;
+}
+
+function MatchSection({ title, matches, ownUnitId, state, perspective = 'neutral' }: {
   title: string;
   matches: MatchDTO[];
   ownUnitId: string;
   state: TournamentStateDTO;
+  perspective?: 'neutral' | 'team';
 }) {
-  if (!matches.length) return null;
+  const orderedMatches = [...matches].sort((a, b) => Number(a.status === 'finished') - Number(b.status === 'finished') || (a.stage === 'PRELIMINARY' ? 0 : a.stage === 'SEMIFINALS' ? 1 : 2) - (b.stage === 'PRELIMINARY' ? 0 : b.stage === 'SEMIFINALS' ? 1 : 2) || a.orderInStage - b.orderInStage);
+  if (!orderedMatches.length) return <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4"><h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">{title}</h2><p className="mt-2 text-sm text-slate-500">Keine Spiele in dieser Liste.</p></section>;
   return <section className="space-y-2" aria-label={title}>
     <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">{title}</h2>
-    {matches.map((match) => {
+    {orderedMatches.map((match) => {
       const mine = match.aUnitId === ownUnitId || match.bUnitId === ownUnitId;
-      return <article key={match.id} className={`rounded-xl border p-3 ${match.status === 'live' ? 'border-red-500/70 bg-red-500/10' : match.status === 'finished' ? 'border-slate-800 bg-slate-900/40 opacity-75' : 'border-slate-800 bg-slate-900/70'} ${mine ? 'ring-1 ring-emerald-500/30' : ''}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-          <span>{match.label} · {stageName(match)}</span>
-          <span className={match.status === 'live' ? 'font-bold text-red-300' : match.status === 'finished' ? 'font-semibold text-emerald-400' : ''}>{match.status === 'live' ? 'LIVE' : match.status === 'finished' ? 'Gespielt' : 'Kommend'}</span>
-        </div>
-        <div className="mt-1 font-semibold text-slate-100">{unitName(state, match.aUnitId)} <span className="text-slate-500">vs</span> {unitName(state, match.bUnitId)}</div>
-        {match.result && <div className="mt-1 text-xs text-slate-400">Ergebnis {match.result.aDamageDealt} – {match.result.bDamageDealt} · Sieger: <span className="font-semibold text-emerald-300">{unitName(state, match.result.winnerUnitId)}</span></div>}
+      const ownWon = mine && match.result?.winnerUnitId === ownUnitId;
+      const ownLost = mine && match.result && match.result.winnerUnitId !== ownUnitId;
+      const cardStyle = perspective === 'team' && ownWon ? 'border-emerald-500/35 bg-emerald-500/[0.07]' : perspective === 'team' && ownLost ? 'border-rose-500/35 bg-rose-500/[0.07]' : match.status === 'live' ? 'border-red-500/70 bg-red-500/10' : 'border-slate-800 bg-slate-900/70';
+      const aWon = Boolean(match.result && match.result.winnerUnitId === match.aUnitId);
+      const bWon = Boolean(match.result && match.result.winnerUnitId === match.bUnitId);
+      return <article key={match.id} className={`rounded-xl border p-3 ${cardStyle} ${match.status === 'finished' && perspective !== 'team' ? 'opacity-90' : ''}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400"><span>{match.label} · {stageName(match)}</span><span className={match.status === 'live' ? 'font-bold text-red-300' : match.status === 'finished' ? 'font-semibold text-emerald-400' : ''}>{match.status === 'live' ? 'LIVE' : match.status === 'finished' ? 'Gespielt' : 'Kommend'}</span></div>
+        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-sm"><span className={`rounded px-2 py-1 font-semibold ${perspective !== 'team' && aWon ? 'bg-emerald-500/10 text-emerald-300' : perspective !== 'team' && bWon ? 'bg-rose-500/10 text-rose-300' : 'text-slate-100'}`}>{unitName(state, match.aUnitId)}</span><span className="text-[10px] text-slate-500">VS</span><span className={`rounded px-2 py-1 text-right font-semibold ${perspective !== 'team' && bWon ? 'bg-emerald-500/10 text-emerald-300' : perspective !== 'team' && aWon ? 'bg-rose-500/10 text-rose-300' : 'text-slate-100'}`}>{unitName(state, match.bUnitId)}</span></div>
+        {match.result && <div className="mt-2 flex flex-wrap justify-between gap-1 text-xs text-slate-400"><span>Schaden ausgeteilt: {match.result.aDamageDealt} – {match.result.bDamageDealt}</span><span>Schaden genommen: {match.result.aDamageTaken} – {match.result.bDamageTaken}</span><span>Sieger: <strong className="text-emerald-300">{unitName(state, match.result.winnerUnitId)}</strong></span></div>}
       </article>;
     })}
   </section>;

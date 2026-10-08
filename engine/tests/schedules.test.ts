@@ -1,6 +1,7 @@
 // Engine tests: schedules, standings and knockout pairing for every supported size.
 
 import { describe, expect, it } from 'vitest';
+import { buildPlayerMatchLists, playerRulesReturnPath, selectOverlayRotationView } from '../../shared/src/index.js';
 import {
   buildSchedule,
   buildUnits,
@@ -31,6 +32,27 @@ function teamUnits(n: number): { units: UnitPlan[]; teams: { name: string; membe
   const { units } = buildUnits(participants, teams, n);
   return { units, teams };
 }
+
+describe('shared player and overlay navigation', () => {
+  it('builds a unique player return route and rotates only selected views', () => {
+    expect(playerRulesReturnPath('tour 1', 'team/2')).toBe('/player/tour%201/team%2F2');
+    expect(selectOverlayRotationView(['all_matches', 'presentation'], 0)).toBe('all_matches');
+    expect(selectOverlayRotationView(['all_matches', 'presentation'], 1)).toBe('presentation');
+    expect(selectOverlayRotationView(['presentation'], 17)).toBe('presentation');
+    expect(selectOverlayRotationView([], 7)).toBe('next_matches');
+  });
+
+  it('keeps completed own matches while composing upcoming and group-specific player lists', () => {
+    const fixture = (id: string, a: string, b: string, status: 'waiting' | 'finished' = 'waiting') => ({ id, stage: 'PRELIMINARY' as const, round: 1, orderInStage: Number(id.slice(1)), label: id, aUnitId: a, bUnitId: b, status, result: status === 'finished' ? { winnerUnitId: a, aDamageDealt: 10, bDamageDealt: 20, aDamageTaken: 20, bDamageTaken: 10 } : null, slotA: null, slotB: null });
+    const matches = [fixture('m1', 'u1', 'u2', 'finished'), fixture('m2', 'u3', 'u4'), fixture('m3', 'u1', 'u3')];
+    const lists = buildPlayerMatchLists(matches, [{ id: 'g1', name: 'A', unitIds: ['u1', 'u2'] }, { id: 'g2', name: 'B', unitIds: ['u3', 'u4'] }], 'u1');
+    expect(lists.ownUpcoming.map((match) => match.id)).toEqual(['m3']);
+    expect(lists.ownComplete.map((match) => match.id)).toEqual(['m1', 'm3']);
+    expect(lists.ownGroupUpcoming).toEqual([]);
+    expect(lists.otherGroupMatches.map((match) => match.id)).toEqual(['m2']);
+    expect(lists).toMatchObject({ ownGroupId: 'g1', otherGroupId: 'g2' });
+  });
+});
 
 describe('formatInfo', () => {
   it('maps sizes to formats', () => {
@@ -242,6 +264,29 @@ describe('computeStandings', () => {
     expect(rows[1].unitId).toBe('u2'); // 1W 500 dealt
     expect(rows[2].unitId).toBe('u4'); // 1W 350 dealt
     expect(rows[3].unitId).toBe('u3'); // 0W
+  });
+
+  it('sorts with the exact priorities and ignores played count and unit name', () => {
+    const units = makeUnits(4);
+    const finished = [
+      { aUnitId: 'u1', bUnitId: 'u2', winnerUnitId: 'u1', aDamageDealt: 700, bDamageDealt: 500 },
+      { aUnitId: 'u3', bUnitId: 'u4', winnerUnitId: 'u3', aDamageDealt: 700, bDamageDealt: 500 },
+      { aUnitId: 'u1', bUnitId: 'u3', winnerUnitId: 'u3', aDamageDealt: 0, bDamageDealt: 200 },
+      { aUnitId: 'u2', bUnitId: 'u4', winnerUnitId: 'u4', aDamageDealt: 500, bDamageDealt: 700 },
+    ];
+    const rows = computeStandings(units, finished);
+    expect(rows.map((row) => row.unitId)).toEqual(['u3', 'u4', 'u1', 'u2']);
+    expect(rows.find((row) => row.unitId === 'u1')).toMatchObject({ wins: 1, damageDealt: 700, damageTaken: 700 });
+    expect(rows.find((row) => row.unitId === 'u2')).toMatchObject({ wins: 0, damageDealt: 1000, damageTaken: 1400 });
+    expect(rows.find((row) => row.unitId === 'u3')).toMatchObject({ wins: 2, damageDealt: 900, damageTaken: 500 });
+    expect(rows.find((row) => row.unitId === 'u4')).toMatchObject({ wins: 1, damageDealt: 1200, damageTaken: 1200 });
+  });
+
+  it('marks only teams with identical wins, damage dealt, and damage taken as tied', () => {
+    const units = makeUnits(2);
+    const rows = computeStandings(units, []);
+    expect(rows.map((row) => row.tied)).toEqual([true, true]);
+    expect(rows.map((row) => row.unitId)).toEqual(['u1', 'u2']);
   });
 
   it('marks exact ties', () => {

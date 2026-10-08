@@ -5,7 +5,7 @@ import { unitName } from '../lib/api';
 
 function Slot({ state, unitId, winner, loser }: { state: TournamentStateDTO; unitId: string | null; winner: boolean; loser: boolean }) {
   const unit = state.units.find((entry) => entry.id === unitId);
-  return <div className={`flex min-w-0 items-center justify-between rounded border px-2 py-1 text-sm font-semibold ${winner ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300' : loser ? 'border-slate-800 bg-slate-900/40 text-slate-500 line-through' : 'border-slate-700 bg-slate-900'}`}>
+  return <div className={`flex min-w-0 items-center justify-between rounded border px-2 py-1 text-sm font-semibold ${winner ? 'border-emerald-500/50 bg-emerald-500/[0.08] text-emerald-200' : loser ? 'border-rose-500/35 bg-rose-500/[0.06] text-rose-200' : 'border-slate-700 bg-slate-900'}`}>
     <span className="flex min-w-0 items-center gap-1.5 truncate">{unit?.members.map((member) => member.imageUrl
       ? <img key={member.id} src={member.imageUrl} alt={`Profilbild ${member.name}`} className="h-6 w-6 shrink-0 rounded-full object-cover" />
       : <span key={member.id} aria-label={`Kein Profilbild für ${member.name}`} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[10px] font-bold">{member.name.slice(0, 1).toUpperCase()}</span>)}<span className="truncate">{unit?.name ?? '—'}</span></span>
@@ -38,8 +38,8 @@ export default function Bracket({ state, compact = false }: { state: TournamentS
           {[ko.sf1, ko.sf2].map((match, index) => {
             const winnerId = index === 0 ? sf1Winner : sf2Winner;
             return <div key={match?.id ?? `sf${index + 1}`} className="relative space-y-1 rounded-lg border border-slate-800 bg-slate-950/30 p-1.5 sm:p-2">
-              <Slot state={state} unitId={match?.aUnitId ?? null} winner={winnerId === match?.aUnitId} loser={!!winnerId && winnerId !== match?.aUnitId} />
-              <Slot state={state} unitId={match?.bUnitId ?? null} winner={winnerId === match?.bUnitId} loser={!!winnerId && winnerId !== match?.bUnitId} />
+              <Slot state={state} unitId={match?.aUnitId ?? null} winner={Boolean(winnerId) && winnerId === match?.aUnitId} loser={!!winnerId && winnerId !== match?.aUnitId} />
+              <Slot state={state} unitId={match?.bUnitId ?? null} winner={Boolean(winnerId) && winnerId === match?.bUnitId} loser={!!winnerId && winnerId !== match?.bUnitId} />
               {!compact && <div className="absolute -right-4 top-1/2 h-px w-4 bg-emerald-500/50" />}
             </div>;
           })}
@@ -50,8 +50,8 @@ export default function Bracket({ state, compact = false }: { state: TournamentS
         <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 sm:text-xs">Finale</div>
         <div className={`relative ${compact ? 'mt-1' : 'mt-16'} space-y-1 rounded-lg border border-slate-800 bg-slate-950/30 p-1.5 sm:p-2`}>
           {!compact && <><div className="absolute -left-4 top-1/4 h-px w-4 bg-emerald-500/50" /><div className="absolute -left-4 top-3/4 h-px w-4 bg-emerald-500/50" /><div className="absolute -left-4 left-0 top-1/4 h-1/2 w-px bg-emerald-500/50" /></>}
-          <Slot state={state} unitId={ko.final?.aUnitId ?? null} winner={champion === ko.final?.aUnitId} loser={!!champion && champion !== ko.final?.aUnitId} />
-          <Slot state={state} unitId={ko.final?.bUnitId ?? null} winner={champion === ko.final?.bUnitId} loser={!!champion && champion !== ko.final?.bUnitId} />
+          <Slot state={state} unitId={ko.final?.aUnitId ?? null} winner={Boolean(champion) && champion === ko.final?.aUnitId} loser={!!champion && champion !== ko.final?.aUnitId} />
+          <Slot state={state} unitId={ko.final?.bUnitId ?? null} winner={Boolean(champion) && champion === ko.final?.bUnitId} loser={!!champion && champion !== ko.final?.bUnitId} />
           {champion && <div className="mt-2 rounded-lg border border-amber-500/60 bg-amber-500/10 px-2 py-1 text-center">
             <div className="text-[9px] font-bold uppercase tracking-widest text-amber-400 sm:text-[10px]">Turniersieger</div>
             <div className="truncate text-xs font-black text-amber-300 sm:text-base">{unitName(state, champion)}</div>

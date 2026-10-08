@@ -10,32 +10,34 @@ datasource db {
 }
 
 model Tournament {
-  id               String   @id // short shareable id, e.g. abc123
-  name             String
-  state            String   // SETUP | PRELIMINARY | SEMIFINALS | FINAL | FINISHED
-  format           String   // round_robin | random_three | groups_of_3
-  unitKind         String   // player | team
-  participantCount Int
-  seed             Int?     // matchup-generation seed for 7/9/11
-  isDemo           Boolean  @default(false)
-  paused           Boolean  @default(false)
-  presentationSlides String  @default("[]")
-  presentationActive Boolean @default(false)
-  presentationIndex Int     @default(0)
-  presentationDeckId String @default("tournament-intro")
-  presentationVideoPath String?
-  presentationVideoActive Boolean @default(false)
-  resultScreenMatchId String?
-  resultScreenUntil DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                      String   @id // short shareable id, e.g. abc123
+  name                    String
+  state                   String   // SETUP | PRELIMINARY | SEMIFINALS | FINAL | FINISHED
+  format                  String   // round_robin | random_three | groups_of_3
+  unitKind                String   // player | team
+  participantCount        Int
+  seed                    Int?     // matchup-generation seed for 7/9/11
+  isDemo                  Boolean  @default(false)
+  adminPasswordHash       String?
+  paused                  Boolean  @default(false)
+  presentationSlides      String   @default("[]")
+  presentationActive      Boolean  @default(false)
+  presentationIndex       Int      @default(0)
+  presentationDeckId      String   @default("tournament-intro")
+  presentationVideoPath   String?
+  presentationVideoActive Boolean  @default(false)
+  resultScreenMatchId     String?
+  resultScreenUntil       DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
-  participants Participant[]
-  units        Unit[]
-  groups       Group[]
-  matches      Match[]
-  settings     TournamentSettings?
-  currentMatch Match?              @relation("CurrentMatch", fields: [currentMatchId], references: [id])
+  participants  Participant[]
+  units         Unit[]
+  groups        Group[]
+  matches       Match[]
+  settings      TournamentSettings?
+  adminSessions AdminSession[]
+  currentMatch  Match?    @relation("CurrentMatch", fields: [currentMatchId], references: [id])
   currentMatchId String?
 }
 
@@ -53,21 +55,22 @@ model Participant {
 }
 
 model Unit {
-  id           String  @id // equals participant id (single) or team id (team)
-  tournamentId String
-  kind         String // player | team
-  name         String
-  country      String?
-  abbreviation String?
-  teamId       String? // set when kind = team
-  readiness    String  @default("waiting") // waiting | ready | in_game
-  readinessMatchId String?
-  problemMessage String?
-  problemCreatedAt DateTime?
-  problemResolved Boolean @default(false)
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  members      TeamMember[]
-  groups       GroupMembership[]
+  id                         String  @id // equals participant id (single) or team id (team)
+  tournamentId               String
+  kind                       String // player | team
+  name                       String
+  country                    String?
+  abbreviation               String?
+  teamId                     String? // set when kind = team
+  readiness                  String  @default("waiting") // waiting | ready | in_game
+  readinessMatchId           String?
+  problemMessage             String?
+  problemCreatedAt           DateTime?
+  problemResolved            Boolean @default(false)
+  problemWithdrawalTokenHash String?
+  tournament                 Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  members                    TeamMember[]
+  groups                     GroupMembership[]
 
   @@index([tournamentId])
 }
@@ -138,12 +141,23 @@ model TournamentSettings {
   tournamentId        String  @unique
   autoRotation        Boolean @default(true)
   rotationIntervalSec Int     @default(30)
+  rotationViews        String  @default("[\"next_matches\",\"all_matches\",\"table\",\"presentation\"]")
   showLogo            Boolean @default(true)
   showTournamentName  Boolean @default(true)
   showFlags           Boolean @default(true)
   compact             Boolean @default(false)
   transparent         Boolean @default(true)
   theme               String  @default("dark")
-  overlayMode         String  @default("auto") // auto | next_matches | table | bracket | current_match | result_screen | presentation
+  overlayMode         String  @default("auto") // auto | next_matches | all_matches | table | bracket | current_match | presentation
   tournament          Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+}
+
+model AdminSession {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tokenHash    String     @unique
+  expiresAt    DateTime
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId, expiresAt])
 }

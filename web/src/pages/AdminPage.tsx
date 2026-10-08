@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { TournamentStateDTO, OverlaySettingsDTO } from '@gt/shared';
 import { api, unitName, useTournamentState } from '../lib/api';
 import StandingsTable from '../components/StandingsTable';
@@ -22,8 +22,13 @@ const STATE_LABELS: Record<string, string> = {
 
 export default function AdminPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { state, error, connected, refresh } = useTournamentState(id ?? null);
   const activeDeck = state?.presentation.decks.find((deck) => deck.id === state.presentation.activeDeckId) ?? state?.presentation.decks[0];
+  const [adminAccess, setAdminAccess] = useState<'checking' | 'denied' | 'granted'>('checking');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [confirmMsg, setConfirmMsg] = useState<{ text: string; action: () => Promise<void> } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -39,17 +44,40 @@ export default function AdminPage() {
   const alertAudioContext = useRef<AudioContext | null>(null);
   const unlockedAdminAudio = useRef(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    setAdminAccess('checking');
+    if (!id) return;
+    void api.checkAdmin(id).then(({ authenticated }) => {
+      if (!cancelled) setAdminAccess(authenticated ? 'granted' : 'denied');
+    }).catch(() => { if (!cancelled) setAdminAccess('denied'); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const login = async () => {
+    if (!id) return;
+    setLoggingIn(true);
+    setLoginError(null);
+    try {
+      await api.loginAdmin(id, adminPassword);
+      setAdminPassword('');
+      setAdminAccess('granted');
+      await refresh();
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen');
+    } finally { setLoggingIn(false); }
+  };
 
   useEffect(() => {
-    if (!state || loadedDeckTournamentId === state.id) return;
+    if (adminAccess !== 'granted' || !state || loadedDeckTournamentId === state.id) return;
     const decks = state.presentation.decks.length ? state.presentation.decks : DEFAULT_PRESENTATION_DECKS;
     setPresentationDecks(JSON.parse(JSON.stringify(decks)) as PresentationDeckDTO[]);
     setSavedDeckId(activeDeck?.id ?? null);
     setLoadedDeckTournamentId(state.id);
-  }, [state?.id, state?.presentation.decks, activeDeck?.id, loadedDeckTournamentId]);
+  }, [adminAccess, state?.id, state?.presentation.decks, activeDeck?.id, loadedDeckTournamentId]);
 
   useEffect(() => {
-    if (!state) return;
+    if (adminAccess !== 'granted' || !state) return;
     const openProblems = participantRowsForAlerts(state.units);
     openProblemCount.current = openProblems.length;
     const openKeys = new Set(openProblems.map((unit) => `${unit.id}:${unit.problemReport?.createdAt}`));
@@ -59,7 +87,7 @@ export default function AdminPage() {
     for (const key of problemAlertIds.current) {
       if (!openKeys.has(key)) problemAlertIds.current.delete(key);
     }
-  }, [state?.units]);
+  }, [adminAccess, state?.units]);
 
   const enableProblemAudio = async () => {
     try {
@@ -73,7 +101,7 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    if (!state?.presentation.active) return;
+    if (adminAccess !== 'granted' || !state?.presentation.active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') void api.setPresentationActive(state.id, false);
       else if (event.key === 'ArrowLeft') void api.navigatePresentation(state.id, -1);
@@ -81,7 +109,10 @@ export default function AdminPage() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [state?.id, state?.presentation.active]);
+  }, [adminAccess, state?.id, state?.presentation.active]);
+
+  if (adminAccess === 'checking') return <main className="mx-auto max-w-xl px-4 py-10 text-center text-slate-400">Admin-Zugang wird geprüft…</main>;
+  if (adminAccess !== 'granted') return <main className="mx-auto max-w-xl px-4 py-10"><Link to="/" className="btn-ghost mb-5">← Startseite</Link><section className="card"><h1 className="mb-2 text-2xl font-black">Admin-Anmeldung</h1><p className="mb-4 text-sm text-slate-400">Gib das Admin-Passwort dieses Turniers ein. Die Sitzung bleibt bis zu 30 Tage auf diesem Browser angemeldet.</p><form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void login(); }}><label className="label" htmlFor="admin-login-password">Admin-Passwort</label><input id="admin-login-password" className="input" type="password" autoComplete="current-password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /><button className="btn-primary w-full" disabled={loggingIn || !adminPassword}>{loggingIn ? 'Wird geprüft…' : 'Anmelden'}</button></form>{loginError && <p role="alert" className="mt-3 text-sm text-red-300">{loginError}</p>}</section></main>;
 
   if (error && !state) {
     return (
@@ -165,6 +196,7 @@ export default function AdminPage() {
           <Link to={`/overlay/${state.id}`} className="btn-ghost text-xs">
             Overlay ↗
           </Link>
+          <button className="btn-ghost text-xs" onClick={async () => { try { await api.logoutAdmin(state.id); } finally { setAdminAccess('denied'); navigate('/'); } }}>Abmelden</button>
           <Link to="/" className="btn-ghost text-xs">
             Startseite
           </Link>
@@ -473,6 +505,7 @@ function nextStageOf(state: TournamentStateDTO): string {
 function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
   const [patch, setPatch] = useState<Partial<OverlaySettingsDTO>>(state.settings);
   const [saved, setSaved] = useState(false);
+  useEffect(() => { setPatch(state.settings); }, [state.settings]);
 
   const toggle = (key: keyof OverlaySettingsDTO) => () => {
     const next = { ...patch, [key]: !patch[key] };
@@ -486,6 +519,7 @@ function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
   const modes: { key: OverlaySettingsDTO['overlayMode']; label: string }[] = [
     { key: 'auto', label: 'AUTO' },
     { key: 'next_matches', label: 'Nächste Spiele' },
+    { key: 'all_matches', label: 'Alle Spiele' },
     { key: 'table', label: 'Tabelle' },
     { key: 'bracket', label: 'Turnierbaum' },
     { key: 'current_match', label: 'Aktuelles Spiel' },
@@ -540,8 +574,31 @@ function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
         </label>
       </div>
 
+      <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+        <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-300">Ansichten für die automatische Drehung</div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          {([
+            ['next_matches', 'Nächste Spiele'],
+            ['all_matches', 'Alle Spiele'],
+            ['table', 'Tabelle'],
+            ['bracket', 'Turnierbaum'],
+            ['current_match', 'Aktuelles Spiel'],
+            ['presentation', 'Präsentation'],
+          ] as const).map(([key, label]) => {
+            const selected = patch.rotationViews?.includes(key) ?? false;
+            return <label key={key} className="flex items-center gap-2"><input type="checkbox" checked={selected} onChange={() => {
+              const current = patch.rotationViews ?? state.settings.rotationViews;
+              const rotationViews = current.includes(key) ? current.filter((view) => view !== key) : [...current, key];
+              if (!rotationViews.length) return;
+              setPatch({ ...patch, rotationViews });
+              void api.updateOverlaySettings(state.id, { rotationViews }).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1500); });
+            }} />{label}</label>;
+          })}
+        </div>
+      </div>
+
       <div className="mt-3 flex items-center gap-2">
-        <label className="label mb-0">Intervall</label>
+        <label className="label mb-0">Wechsel alle</label>
         <input
           className="input w-20 table-cell-num"
           inputMode="numeric"
@@ -550,18 +607,9 @@ function OverlaySettingsCard({ state }: { state: TournamentStateDTO }) {
             const v = Number(e.target.value.replace(/[^0-9]/g, '')) || 30;
             setPatch({ ...patch, rotationIntervalSec: v });
           }}
-          onBlur={() => void api.updateOverlaySettings(state.id, { rotationIntervalSec: patch.rotationIntervalSec })}
+          onBlur={() => void api.updateOverlaySettings(state.id, { rotationIntervalSec: patch.rotationIntervalSec }).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1500); })}
         />
-        <button
-          onClick={() =>
-            void api
-              .updateOverlaySettings(state.id, { theme: state.settings.theme === 'dark' ? 'light' : 'dark' })
-              .then(() => setSaved(true))
-          }
-          className="btn-ghost text-xs"
-        >
-          Farbschema: {state.settings.theme}
-        </button>
+        <span className="text-xs text-slate-400">Sekunden</span>
       </div>
     </div>
   );
