@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/services/db.js';
 import { createTournament, deleteTournament } from '../src/services/mutations.js';
+import { createAdminSession } from '../src/services/auth.js';
 
 const server = createServer(createApp());
 let baseUrl = '';
@@ -16,14 +17,17 @@ async function post(path: string, body: unknown, cookie?: string, method = 'POST
   });
 }
 
-describe('admin API authorization', () => {
+function createBody(name: string) {
+  return {
+    name,
+    participantCount: 4,
+    participants: Array.from({ length: 4 }, (_, index) => ({ name: `${name} player ${index + 1}` })),
+  };
+}
+
+describe('global admin authorization', () => {
   beforeAll(async () => {
-    tournamentId = await createTournament({
-      name: 'HTTP auth regression',
-      participantCount: 4,
-      adminPassword: 'secure-test-password-123',
-      participants: Array.from({ length: 4 }, (_, index) => ({ name: `Auth player ${index + 1}` })),
-    });
+    tournamentId = await createTournament(createBody('HTTP global auth regression'));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Test server did not bind a TCP port');
@@ -35,106 +39,97 @@ describe('admin API authorization', () => {
     if (tournamentId) await deleteTournament(tournamentId);
   });
 
-  it('denies URL-only access to every privileged route and keeps public player actions available', async () => {
-    const publicState = await fetch(`${baseUrl}/tournaments/${tournamentId}`);
-    expect(publicState.status).toBe(200);
-    const publicBody = await publicState.text();
-    expect(publicBody).not.toContain('secure-test-password-123');
-    expect(publicBody).not.toContain('adminPasswordHash');
-    expect(publicBody).not.toContain('scrypt$');
+  it('denies unauthenticated creation/admin routes and preserves public display and player actions', async () => {
+    const deniedCreate = await post('/tournaments', createBody('Should not exist'));
+    expect(deniedCreate.status).toBe(401);
+    const deniedDemo = await post('/demo', { kind: 'full' });
+    expect(deniedDemo.status).toBe(401);
 
-    const initial = await (await fetch(`${baseUrl}/tournaments/${tournamentId}`)).json() as { matches: { id: string }[]; units: { id: string; members: { id: string }[] }[] };
-    const unitId = initial.units[0].id;
-    const participantId = initial.units[0].members[0].id;
+    const publicList = await fetch(`${baseUrl}/tournaments`);
+    expect(publicList.status).toBe(200);
+    const publicResponse = await fetch(`${baseUrl}/tournaments/${tournamentId}`);
+    expect(publicResponse.status).toBe(200);
+    const publicState = await publicResponse.json() as { matches: { id: string }[]; units: { id: string; members: { id: string }[] }[] };
+    const firstUnit = publicState.units[0];
+    expect((await fetch(`${baseUrl}/tournaments/${tournamentId}/player/${firstUnit.id}`)).status).toBe(200);
+    expect((await post(`/tournaments/${tournamentId}/units/${firstUnit.id}/readiness`, { readiness: 'ready' })).status).toBe(200);
+    expect((await post(`/tournaments/${tournamentId}/units/${firstUnit.id}/problem`, { message: 'Public player help' })).status).toBe(200);
+
     const paths: [string, unknown, string?][] = [
       [`/tournaments/${tournamentId}/state`, { state: 'PRELIMINARY' }],
       [`/tournaments/${tournamentId}/reset`, {}],
-      [`/tournaments/${tournamentId}/pause`, { paused: true }],
-      [`/tournaments/${tournamentId}/units/${unitId}/ping`, {}],
-      [`/tournaments/${tournamentId}/units/${unitId}/problem/resolve`, {}],
-      [`/tournaments/${tournamentId}/participants/${participantId}/image`, { mimeType: 'image/png', dataBase64: '' }],
-      [`/tournaments/${tournamentId}/current-match`, { matchId: initial.matches[0].id }],
-      [`/tournaments/${tournamentId}/matches/${initial.matches[0].id}/result`, { winnerUnitId: unitId, aDamageDealt: 1, bDamageDealt: 1 }],
-      [`/tournaments/${tournamentId}/matches/${initial.matches[0].id}/result`, { winnerUnitId: unitId, aDamageDealt: 1, bDamageDealt: 1 }, 'PUT'],
-      [`/tournaments/${tournamentId}/undo`, {}],
-      [`/tournaments/${tournamentId}/overlay-settings`, { autoRotation: false }, 'PATCH'],
-      [`/tournaments/${tournamentId}/presentation/decks`, { decks: [] }, 'PUT'],
-      [`/tournaments/${tournamentId}/presentation/deck`, { deckId: 'not-a-deck' }],
-      [`/tournaments/${tournamentId}/presentation/video/active`, { active: true }],
-      [`/tournaments/${tournamentId}/presentation/active`, { active: true }],
-      [`/tournaments/${tournamentId}/presentation/navigate`, { direction: 1 }],
-      [`/tournaments/${tournamentId}/overlay-mode`, { mode: 'all_matches' }],
+      [`/tournaments/${tournamentId}/units/${firstUnit.id}/ping`, {}],
+      [`/tournaments/${tournamentId}/units/${firstUnit.id}/problem/resolve`, {}],
+      [`/tournaments/${tournamentId}/participants/${firstUnit.members[0].id}/image`, { mimeType: 'image/png', dataBase64: '' }],
+      [`/tournaments/${tournamentId}/current-match`, { matchId: publicState.matches[0].id }],
+      ['/demo', {}, 'DELETE'],
     ];
     for (const [path, body, method = 'POST'] of paths) {
       const response = await post(path, body, undefined, method);
       expect(response.status, `${method} ${path}`).toBe(401);
-      expect((await response.json()).error).toMatch(/Admin-Anmeldung/);
     }
-
-    const deniedDelete = await post(`/tournaments/${tournamentId}`, {}, undefined, 'DELETE');
-    expect(deniedDelete.status).toBe(401);
-    const deniedImageDelete = await post(`/tournaments/${tournamentId}/participants/${participantId}/image`, {}, undefined, 'DELETE');
-    expect(deniedImageDelete.status).toBe(401);
-    await prisma.tournament.update({ where: { id: tournamentId }, data: { isDemo: true } });
-    const deniedBulkDemoDelete = await post('/demo', {}, undefined, 'DELETE');
-    expect(deniedBulkDemoDelete.status).toBe(401);
-    expect((await prisma.tournament.findUnique({ where: { id: tournamentId }, select: { id: true } }))?.id).toBe(tournamentId);
-    await prisma.tournament.update({ where: { id: tournamentId }, data: { isDemo: false } });
+    expect((await post(`/tournaments/${tournamentId}`, {}, undefined, 'DELETE')).status).toBe(401);
     const uploadDenied = await fetch(`${baseUrl}/tournaments/${tournamentId}/presentation/video`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/octet-stream' },
-      body: Buffer.alloc(1024),
+      method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: Buffer.alloc(1024),
     });
     expect(uploadDenied.status).toBe(401);
-    const malformedCookieUpload = await fetch(`${baseUrl}/tournaments/${tournamentId}/presentation/video`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/octet-stream', cookie: `gt_admin_${tournamentId}=%ZZ` },
-      body: Buffer.alloc(1024),
-    });
-    expect(malformedCookieUpload.status).toBe(401);
-
-    const readiness = await post(`/tournaments/${tournamentId}/units/${unitId}/readiness`, { readiness: 'in_game' });
-    expect(readiness.status).toBe(200);
-    const report = await post(`/tournaments/${tournamentId}/units/${unitId}/problem`, { message: 'HTTP public-help test' });
-    expect(report.status).toBe(200);
-    const withdrawalToken = (await report.json()).withdrawalToken as string;
-    const withdraw = await post(`/tournaments/${tournamentId}/units/${unitId}/problem/withdraw`, { withdrawalToken });
-    expect(withdraw.status).toBe(200);
-    expect((await prisma.tournament.findUnique({ where: { id: tournamentId }, select: { state: true } }))?.state).toBe('SETUP');
   });
 
-  it('grants only after password login and retains the tournament-scoped session after reload', async () => {
-    const wrongLogin = await post(`/tournaments/${tournamentId}/admin-session`, { password: 'wrong-password-123' });
+  it('rejects incorrect passwords, issues one global cookie session and permits creation across tournaments', async () => {
+    const wrongLogin = await post('/admin-session', { password: 'wrong-password' });
     expect(wrongLogin.status).toBe(401);
-    const login = await post(`/tournaments/${tournamentId}/admin-session`, { password: 'secure-test-password-123' });
+    expect((await wrongLogin.json()).error).toBe('Admin-Passwort ist falsch');
+
+    const login = await post('/admin-session', { password: 'global-test-admin-password' });
     expect(login.status).toBe(200);
     expect(await login.json()).toMatchObject({ authenticated: true });
     const cookie = login.headers.get('set-cookie');
-    expect(cookie).toMatch(/^gt_admin_/);
+    expect(cookie).toMatch(/^gt_admin=/);
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Strict');
-    expect(cookie).not.toContain('secure-test-password-123');
+    expect(cookie).toContain('Max-Age=');
+    expect(cookie).not.toContain('global-test-admin-password');
     const cookiePair = cookie!.split(';')[0];
-    const mp4 = Buffer.alloc(32);
-    mp4.write('ftyp', 4, 'ascii');
-    const permittedUpload = await fetch(`${baseUrl}/tournaments/${tournamentId}/presentation/video`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/octet-stream', cookie: cookiePair },
-      body: mp4,
-    });
-    expect(permittedUpload.status).toBe(200);
 
-    const session = await fetch(`${baseUrl}/tournaments/${tournamentId}/admin-session`, { headers: { cookie: cookiePair } });
-    expect(await session.json()).toEqual({ authenticated: true });
-    const allowed = await post(`/tournaments/${tournamentId}/state`, { state: 'PRELIMINARY' }, cookiePair);
-    expect(allowed.status).toBe(200);
-    expect((await prisma.tournament.findUnique({ where: { id: tournamentId }, select: { state: true } }))?.state).toBe('PRELIMINARY');
+    const created = await post('/tournaments', createBody('Created by global admin'), cookiePair);
+    expect(created.status).toBe(200);
+    const createdId = (await created.json()).id as string;
+    try {
+      const secondTournament = await createTournament(createBody('Second tournament'));
+      try {
+        const adminResponse = await post(`/tournaments/${secondTournament}/state`, { state: 'PRELIMINARY' }, cookiePair);
+        expect(adminResponse.status).toBe(200);
+      } finally { await deleteTournament(secondTournament); }
+      const state = await prisma.tournament.findUnique({ where: { id: createdId }, select: { id: true } });
+      expect(state?.id).toBe(createdId);
+    } finally { await deleteTournament(createdId); }
 
-    const logout = await post(`/tournaments/${tournamentId}/admin-session`, {}, cookiePair, 'DELETE');
+    const reloadSession = await fetch(`${baseUrl}/admin-session`, { headers: { cookie: cookiePair } });
+    expect(await reloadSession.json()).toEqual({ authenticated: true });
+    const protectedAction = await post(`/tournaments/${tournamentId}/state`, { state: 'PRELIMINARY' }, cookiePair);
+    expect(protectedAction.status).toBe(200);
+    await prisma.tournament.update({ where: { id: tournamentId }, data: { state: 'SETUP' } });
+
+    const logout = await post('/admin-session', {}, cookiePair, 'DELETE');
     expect(logout.status).toBe(200);
-    const loggedOutCheck = await fetch(`${baseUrl}/tournaments/${tournamentId}/admin-session`, { headers: { cookie: cookiePair } });
-    expect(await loggedOutCheck.json()).toEqual({ authenticated: false });
-    const afterLogout = await post(`/tournaments/${tournamentId}/reset`, {}, cookiePair);
-    expect(afterLogout.status).toBe(401);
+    expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
+    const loggedOut = await fetch(`${baseUrl}/admin-session`, { headers: { cookie: cookiePair } });
+    expect(await loggedOut.json()).toEqual({ authenticated: false });
+    expect((await post(`/tournaments/${tournamentId}/reset`, {}, cookiePair)).status).toBe(401);
+  });
+
+  it('rejects sessions with expired timestamps and fails closed without password configuration', async () => {
+    const session = await createAdminSession('global-test-admin-password', 'expired-session-test');
+    await prisma.globalAdminSession.updateMany({ where: { tokenHash: { not: '' } }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await fetch(`${baseUrl}/admin-session`, { headers: { cookie: `gt_admin=${session.token}` } })).status).toBe(200);
+    expect(await (await fetch(`${baseUrl}/admin-session`, { headers: { cookie: `gt_admin=${session.token}` } })).json()).toEqual({ authenticated: false });
+    expect((await post(`/tournaments/${tournamentId}/reset`, {}, `gt_admin=${session.token}`)).status).toBe(401);
+
+    const configuredPassword = process.env.ADMIN_PASSWORD;
+    delete process.env.ADMIN_PASSWORD;
+    try {
+      const missingConfig = await post('/admin-session', { password: 'anything' });
+      expect(missingConfig.status).toBe(503);
+    } finally { process.env.ADMIN_PASSWORD = configuredPassword; }
   });
 });

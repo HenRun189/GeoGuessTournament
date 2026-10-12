@@ -12,29 +12,28 @@ import {
   navigatePresentation, setPresentationActive, uploadPresentationVideo, setPresentationVideoActive,
   createDemoTournament,
 } from '../services/mutations.js';
-import { createAdminSession, hashAdminSessionToken, isAdminSessionValid, revokeAdminSession } from '../services/auth.js';
+import { createAdminSession, isAdminSessionValid, revokeAdminSession } from '../services/auth.js';
 import type { Request, Response, NextFunction } from 'express';
 
 export const api = Router();
 
-function adminToken(req: Request, tournamentId: string): string | undefined {
+function adminToken(req: Request): string | undefined {
   const bearer = req.header('authorization')?.replace(/^Bearer\s+/i, '');
   if (bearer) return bearer;
-  const prefix = `gt_admin_${tournamentId}=`;
-  const entry = (req.header('cookie')?.split(';') ?? []).map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith(prefix));
+  const entry = (req.header('cookie')?.split(';') ?? []).map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith('gt_admin='));
   if (!entry) return undefined;
-  try { return decodeURIComponent(entry.slice(prefix.length)); } catch { return undefined; }
+  try { return decodeURIComponent(entry.slice('gt_admin='.length)); } catch { return undefined; }
 }
 
-function setAdminCookie(res: Response, tournamentId: string, token: string, expiresAt: string): void {
+function setAdminCookie(res: Response, token: string, expiresAt: string): void {
   const maxAge = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `gt_admin_${tournamentId}=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/api; HttpOnly; SameSite=Strict${secure}`);
+  res.setHeader('Set-Cookie', `gt_admin=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/api; HttpOnly; SameSite=Strict${secure}`);
 }
 
-function clearAdminCookie(res: Response, tournamentId: string): void {
+function clearAdminCookie(res: Response): void {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `gt_admin_${tournamentId}=; Max-Age=0; Path=/api; HttpOnly; SameSite=Strict${secure}`);
+  res.setHeader('Set-Cookie', `gt_admin=; Max-Age=0; Path=/api; HttpOnly; SameSite=Strict${secure}`);
 }
 
 function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
@@ -54,8 +53,7 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
 
 const adminOnly = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const tournamentId = String(req.params.id ?? '');
-    if (!tournamentId || !(await isAdminSessionValid(tournamentId, adminToken(req, tournamentId)))) {
+    if (!(await isAdminSessionValid(adminToken(req)))) {
       res.status(401).json({ error: 'Admin-Anmeldung erforderlich' });
       return;
     }
@@ -75,16 +73,15 @@ api.get('/events', (req, res) => {
 });
 
 // ---- admin authentication ----
-api.post('/tournaments/:id/admin-session', handle(async (req, res) => {
-  const session = await createAdminSession(String(req.params.id), String(req.body?.password ?? ''));
-  setAdminCookie(res, String(req.params.id), session.token, session.expiresAt);
+api.post('/admin-session', handle(async (req, res) => {
+  const session = await createAdminSession(String(req.body?.password ?? ''), req.ip);
+  setAdminCookie(res, session.token, session.expiresAt);
   return { authenticated: true, expiresAt: session.expiresAt };
 }));
-api.get('/tournaments/:id/admin-session', handle(async (req) => ({ authenticated: await isAdminSessionValid(String(req.params.id), adminToken(req, String(req.params.id))) })));
-api.delete('/tournaments/:id/admin-session', handle(async (req, res) => {
-  const id = String(req.params.id);
-  await revokeAdminSession(id, adminToken(req, id));
-  clearAdminCookie(res, id);
+api.get('/admin-session', handle(async (req) => ({ authenticated: await isAdminSessionValid(adminToken(req)) })));
+api.delete('/admin-session', handle(async (req, res) => {
+  await revokeAdminSession(adminToken(req));
+  clearAdminCookie(res);
   return { ok: true };
 }));
 
@@ -93,13 +90,7 @@ api.get('/tournaments', handle(async () => {
   const rows = await prisma.tournament.findMany({ orderBy: { createdAt: 'desc' }, select: { id: true, name: true, state: true, participantCount: true, createdAt: true, isDemo: true } });
   return { tournaments: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })) };
 }));
-api.post('/tournaments', handle(async (req, res) => {
-  if (typeof req.body?.adminPassword !== 'string') throw new ServiceError('Admin-Passwort ist erforderlich');
-  const id = await createTournament(req.body);
-  const session = await createAdminSession(id, req.body.adminPassword);
-  setAdminCookie(res, id, session.token, session.expiresAt);
-  return { id };
-}));
+api.post('/tournaments', adminOnly, handle(async (req) => ({ id: await createTournament(req.body) })));
 api.get('/tournaments/:id', handle(async (req) => getTournamentState(String(req.params.id))));
 api.get('/tournaments/:id/player/:unitId', handle(async (req) => {
   const tournamentId = String(req.params.id);
@@ -145,24 +136,13 @@ api.post('/tournaments/:id/presentation/navigate', adminOnly, handle(async (req)
 }));
 api.post('/tournaments/:id/overlay-mode', adminOnly, handle(async (req) => { await setOverlayMode(String(req.params.id), (req.body?.mode ?? 'auto') as OverlayOverrideDTO['mode']); return { ok: true }; }));
 
-// Demo generation/deletion are admin operations too; generated demos share the password flow.
-api.post('/demo', handle(async (req, res) => {
+// Demo generation/deletion use the same global admin session as other management APIs.
+api.post('/demo', adminOnly, handle(async (req) => {
   const kind = (req.body?.kind ?? 'full') as 'full' | 'team' | 'groups';
-  const password = String(req.body?.adminPassword ?? '');
-  const id = await createDemoTournament(kind, password);
-  const session = await createAdminSession(id, password);
-  setAdminCookie(res, id, session.token, session.expiresAt);
+  const id = await createDemoTournament(kind);
   return { id };
 }));
-api.delete('/demo', handle(async (req, res) => {
-  const bearer = req.header('authorization')?.replace(/^Bearer\s+/i, '');
-  const cookies = (req.header('cookie')?.split(';') ?? []).map((cookie) => cookie.trim());
-  const tokens = [bearer, ...cookies.filter((cookie) => cookie.startsWith('gt_admin_')).map((cookie) => {
-    try { return decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1)); } catch { return ''; }
-  })].filter((token): token is string => Boolean(token));
-  const sessions = tokens.length ? await prisma.adminSession.findMany({ where: { tokenHash: { in: tokens.map((token) => hashAdminSessionToken(token)) }, expiresAt: { gt: new Date() } }, select: { tournamentId: true } }) : [];
-  const demos = await prisma.tournament.findMany({ where: { isDemo: true }, select: { id: true } });
-  if (demos.some((demo) => !sessions.some((session) => session.tournamentId === demo.id))) throw new ServiceError('Admin-Anmeldung für alle Demo-Turniere erforderlich', 401);
+api.delete('/demo', adminOnly, handle(async () => {
   const removed = await deleteDemoTournaments();
   return { removed };
 }));

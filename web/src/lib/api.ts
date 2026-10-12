@@ -18,9 +18,9 @@ export const api = {
   listTournaments: () => request<{ tournaments: TournamentSummaryDTO[] }>('/tournaments'),
   getTournament: (id: string) => request<TournamentStateDTO>(`/tournaments/${id}`),
   createTournament: (body: unknown) => request<{ id: string }>('/tournaments', { method: 'POST', body: JSON.stringify(body) }),
-  loginAdmin: (id: string, password: string) => request<{ authenticated: boolean; expiresAt: string }>(`/tournaments/${id}/admin-session`, { method: 'POST', body: JSON.stringify({ password }) }),
-  checkAdmin: (id: string) => request<{ authenticated: boolean }>(`/tournaments/${id}/admin-session`),
-  logoutAdmin: (id: string) => request<{ ok: boolean }>(`/tournaments/${id}/admin-session`, { method: 'DELETE' }),
+  loginAdmin: (password: string) => request<{ authenticated: boolean; expiresAt: string }>('/admin-session', { method: 'POST', body: JSON.stringify({ password }) }),
+  checkAdmin: () => request<{ authenticated: boolean }>('/admin-session'),
+  logoutAdmin: () => request<{ ok: boolean }>('/admin-session', { method: 'DELETE' }),
   setState: (id: string, state: string) => request(`/tournaments/${id}/state`, { method: 'POST', body: JSON.stringify({ state }) }),
   reset: (id: string) => request(`/tournaments/${id}/reset`, { method: 'POST' }),
   deleteTournament: (id: string) => request(`/tournaments/${id}`, { method: 'DELETE' }),
@@ -70,7 +70,7 @@ export const api = {
     request(`/tournaments/${id}/presentation/video/active`, { method: 'POST', body: JSON.stringify({ active }) }),
   navigatePresentation: (id: string, direction: -1 | 1) =>
     request(`/tournaments/${id}/presentation/navigate`, { method: 'POST', body: JSON.stringify({ direction }) }),
-  createDemo: (kind: 'full' | 'team' | 'groups', adminPassword: string) => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind, adminPassword }) }),
+  createDemo: (kind: 'full' | 'team' | 'groups') => request<{ id: string }>('/demo', { method: 'POST', body: JSON.stringify({ kind }) }),
   playerImageUrl: (imageUrl: string | null) => imageUrl ? `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(imageUrl)}` : null,
   deleteDemo: () => request<{ removed: number }>('/demo', { method: 'DELETE' }),
 };

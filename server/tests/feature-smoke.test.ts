@@ -25,7 +25,6 @@ describe('feature smoke', () => {
     tournamentId = await createTournament({
       name: 'Disposable feature smoke',
       participantCount: 4,
-      adminPassword: 'test-password-123',
       participants: Array.from({ length: 4 }, (_, index) => ({ name: `Smoke ${index + 1}` })),
     });
     await setTournamentState(tournamentId, 'PRELIMINARY');

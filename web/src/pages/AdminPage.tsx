@@ -11,6 +11,7 @@ import ResultEntry from '../components/ResultEntry';
 import Bracket from '../components/Bracket';
 import PresentationEditor from '../components/PresentationEditor';
 import { DEFAULT_PRESENTATION_DECKS, type PresentationDeckDTO, type UnitDTO } from '@gt/shared';
+import { useAdminAuth } from '../main';
 
 const STATE_LABELS: Record<string, string> = {
   SETUP: 'Einrichten',
@@ -24,11 +25,8 @@ export default function AdminPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { state, error, connected, refresh } = useTournamentState(id ?? null);
+  const globalAdmin = useAdminAuth();
   const activeDeck = state?.presentation.decks.find((deck) => deck.id === state.presentation.activeDeckId) ?? state?.presentation.decks[0];
-  const [adminAccess, setAdminAccess] = useState<'checking' | 'denied' | 'granted'>('checking');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loggingIn, setLoggingIn] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [confirmMsg, setConfirmMsg] = useState<{ text: string; action: () => Promise<void> } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -45,28 +43,10 @@ export default function AdminPage() {
   const unlockedAdminAudio = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-    setAdminAccess('checking');
-    if (!id) return;
-    void api.checkAdmin(id).then(({ authenticated }) => {
-      if (!cancelled) setAdminAccess(authenticated ? 'granted' : 'denied');
-    }).catch(() => { if (!cancelled) setAdminAccess('denied'); });
-    return () => { cancelled = true; };
-  }, [id]);
+    if (globalAdmin.status === 'authenticated') void refresh();
+  }, [globalAdmin.status, id, refresh]);
 
-  const login = async () => {
-    if (!id) return;
-    setLoggingIn(true);
-    setLoginError(null);
-    try {
-      await api.loginAdmin(id, adminPassword);
-      setAdminPassword('');
-      setAdminAccess('granted');
-      await refresh();
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen');
-    } finally { setLoggingIn(false); }
-  };
+  const adminAccess = globalAdmin.status === 'authenticated' ? 'granted' : globalAdmin.status === 'checking' ? 'checking' : 'denied';
 
   useEffect(() => {
     if (adminAccess !== 'granted' || !state || loadedDeckTournamentId === state.id) return;
@@ -112,7 +92,7 @@ export default function AdminPage() {
   }, [adminAccess, state?.id, state?.presentation.active]);
 
   if (adminAccess === 'checking') return <main className="mx-auto max-w-xl px-4 py-10 text-center text-slate-400">Admin-Zugang wird geprüft…</main>;
-  if (adminAccess !== 'granted') return <main className="mx-auto max-w-xl px-4 py-10"><Link to="/" className="btn-ghost mb-5">← Startseite</Link><section className="card"><h1 className="mb-2 text-2xl font-black">Admin-Anmeldung</h1><p className="mb-4 text-sm text-slate-400">Gib das Admin-Passwort dieses Turniers ein. Die Sitzung bleibt bis zu 30 Tage auf diesem Browser angemeldet.</p><form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void login(); }}><label className="label" htmlFor="admin-login-password">Admin-Passwort</label><input id="admin-login-password" className="input" type="password" autoComplete="current-password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /><button className="btn-primary w-full" disabled={loggingIn || !adminPassword}>{loggingIn ? 'Wird geprüft…' : 'Anmelden'}</button></form>{loginError && <p role="alert" className="mt-3 text-sm text-red-300">{loginError}</p>}</section></main>;
+  if (adminAccess !== 'granted') return <main className="mx-auto max-w-xl px-4 py-10"><Link to="/" className="btn-ghost mb-5">← Startseite</Link><section className="card"><h1 className="mb-2 text-2xl font-black">Admin-Anmeldung erforderlich</h1><p className="text-sm text-slate-400">Melde dich über „Admin-Login“ im oberen Menü an, um dieses Turnier zu verwalten.</p></section></main>;
 
   if (error && !state) {
     return (
@@ -196,7 +176,6 @@ export default function AdminPage() {
           <Link to={`/overlay/${state.id}`} className="btn-ghost text-xs">
             Overlay ↗
           </Link>
-          <button className="btn-ghost text-xs" onClick={async () => { try { await api.logoutAdmin(state.id); } finally { setAdminAccess('denied'); navigate('/'); } }}>Abmelden</button>
           <Link to="/" className="btn-ghost text-xs">
             Startseite
           </Link>

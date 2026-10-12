@@ -6,7 +6,6 @@ import { buildSchedule, buildUnits, formatInfo } from '@gt/engine';
 import { nanoid } from 'nanoid';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { hashAdminPassword } from './auth.js';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prisma, broadcast } from './db.js';
@@ -22,7 +21,6 @@ export interface CreateTournamentArgs {
   participants: { id?: string; name: string; country?: string | null; abbreviation?: string | null }[];
   teams?: { id?: string; name: string; country?: string | null; abbreviation?: string | null; memberIds: string[] }[] | null;
   isDemo?: boolean;
-  adminPassword: string;
 }
 
 async function emit(tournamentId: string): Promise<void> {
@@ -118,8 +116,6 @@ export async function createTournament(args: CreateTournamentArgs): Promise<stri
   }
   const name = args.name?.trim();
   if (!name) throw new ServiceError('Tournament name is required');
-  const adminPasswordHash = await hashAdminPassword(args.adminPassword);
-
   const participants = (args.participants ?? []).map((p) => ({ ...p, name: (p.name ?? '').trim() }));
   if (participants.length !== size) {
     throw new ServiceError(`Expected ${size} participants, got ${participants.length}`);
@@ -176,7 +172,6 @@ export async function createTournament(args: CreateTournamentArgs): Promise<stri
       participantCount: size,
       seed: schedule.seed,
       isDemo: args.isDemo ?? false,
-      adminPasswordHash,
       participants: {
         create: dbParticipants.map((p) => ({
           id: p.id,
@@ -966,7 +961,7 @@ const DEMO_NAMES = [
   'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima',
 ];
 
-export async function createDemoTournament(kind: 'full' | 'team' | 'groups', adminPassword: string): Promise<string> {
+export async function createDemoTournament(kind: 'full' | 'team' | 'groups'): Promise<string> {
   const sizes: Record<string, number> = { full: 7, team: 8, groups: 6 };
   const size = sizes[kind] ?? 7;
   const participants = DEMO_NAMES.slice(0, size).map((n) => ({ name: `Player ${n}` }));
@@ -985,7 +980,6 @@ export async function createDemoTournament(kind: 'full' | 'team' | 'groups', adm
       participants: pre,
       teams,
       isDemo: true,
-      adminPassword,
     });
     await fillDemoResults(tid);
     return tid;
@@ -995,7 +989,6 @@ export async function createDemoTournament(kind: 'full' | 'team' | 'groups', adm
     participantCount: size,
     participants,
     isDemo: true,
-    adminPassword,
   });
   await fillDemoResults(tid);
   return tid;

@@ -21,11 +21,15 @@ Self-hosted tournament management for GeoGuessr events with **4–12 participant
 - [Testing](#testing)
 - [API reference](#api-reference)
 - [Design notes & assumptions](#design-notes--assumptions)
-- [Known limitations](#known-limitations)
+- [Security notes](#security-notes)
 
 ---
 
 ## Features
+
+### Global admin authentication
+
+Use **Admin-Login** in the top navigation and the server-configured global password to sign in once. The server keeps a random session token only in an `HttpOnly`, `SameSite=Strict` cookie (12-hour expiry); logout revokes it. All tournament creation, demo management and moderator APIs require this session, irrespective of tournament id. Public tournament pages and player status/help actions remain available without signing in.
 
 ### Moderator panel (`/admin/:id`)
 
@@ -107,7 +111,7 @@ npm run db:push -w server
 npm run dev
 ```
 
-Then open **http://localhost:5173** and click **+ Neues Turnier**.
+Set `ADMIN_PASSWORD` in `server/.env`, then open **http://localhost:5173**, choose **Admin-Login** in the top navigation, and sign in before creating or managing tournaments. `server/.env.example` documents the server-only settings.
 
 <details>
 <summary>Creating a tournament — the setup wizard</summary>
@@ -128,12 +132,13 @@ The Vite dev server proxies `/api` to `http://localhost:8787`, so both halves ar
 
 ## Configuration
 
-Configuration lives in `server/.env` (git-ignored):
+Configuration lives in `server/.env` (git-ignored); use `server/.env.example` as the template. `ADMIN_PASSWORD` is required, is read only by the server and has no insecure fallback. The local development value is `189GgT`; rotate this value before public hosting. Never copy it into frontend settings.
 
 | Variable       | Default                        | Purpose                                                   |
 | -------------- | ------------------------------ | --------------------------------------------------------- |
 | `DATABASE_URL` | `file:./prisma/dev.db`         | Prisma connection string (SQLite)                         |
 | `PORT`         | `8787`                         | API port. Note: `PORT=0` is treated as "use the default".  |
+| `ADMIN_PASSWORD` | required, no fallback       | Global admin password; only read by the API server. Login fails closed if missing. |
 
 **Swapping to PostgreSQL:** change the `datasource db` provider in [server/prisma/schema.prisma](server/prisma/schema.prisma) and point `DATABASE_URL` at your database. No application code changes are required.
 
@@ -283,8 +288,8 @@ Serve `web/dist` from any static host and proxy both `/api` and `/api/events` (t
 npm test
 ```
 
-- **Engine — 22 tests:** round-robin completeness and match counts per size, 7/9/11 random schedule generation (unique opponents, correct degree distribution, seed reproducibility), group plans, standings tie ordering, and team validation rules.
-- **Server — 26 tests:** the full tournament lifecycle for every size 4–12 (create → preliminary → semifinals → final → finished), no duplicate opponents for 7/9/11, semifinal pairings (1 v 4, 2 v 3, and 1A v 2B cross-group), eliminations, invalid-result rejection, double-save protection, result correction and recomputation, undo, reset and delete.
+- **Engine — 26 tests:** round-robin completeness, random schedule generation, group plans, standings, and team validation.
+- **Server — 35 tests:** tournament lifecycle across sizes, match/result flows, public-player access, global admin login/logout, session expiry, creation authorization, and protected-route checks.
 
 Server tests set `DATABASE_URL=file:./test.db` and push the schema in `tests/setup.ts`, which Prisma resolves to `server/prisma/test.db` — a separate file, so the development database is never touched.
 
@@ -305,7 +310,7 @@ All endpoints are mounted under `/api`. Responses are JSON; errors return `{ "er
 | Method   | Path                                  | Description                              |
 | -------- | ------------------------------------- | ---------------------------------------- |
 | `GET`    | `/tournaments`                        | List all tournaments                     |
-| `POST`   | `/tournaments`                        | Create a tournament, returns `{ id }`    |
+| `POST`   | `/tournaments`                        | Create a tournament (global admin session required), returns `{ id }`    |
 | `GET`    | `/tournaments/:id`                    | Full aggregated state                   |
 | `DELETE` | `/tournaments/:id`                    | Delete a tournament and all its data     |
 | `POST`   | `/tournaments/:id/state`              | Set the stage explicitly                 |
@@ -350,8 +355,8 @@ Both take `{ winnerUnitId, aDamageDealt, bDamageDealt }`.
 
 | Method   | Path      | Description                                            |
 | -------- | --------- | ------------------------------------------------------ |
-| `POST`   | `/demo`   | Create a demo tournament. Body: `{ kind: "full" \| "team" \| "groups" }` |
-| `DELETE` | `/demo`   | Delete every demo tournament, returns `{ removed }`    |
+| `POST`   | `/demo`   | Create a demo tournament (global admin session required). Body: `{ kind: "full" \| "team" \| "groups" }` |
+| `DELETE` | `/demo`   | Delete every demo tournament (global admin session required), returns `{ removed }`    |
 
 ### Other
 
@@ -373,9 +378,10 @@ Both take `{ winnerUnitId, aDamageDealt, bDamageDealt }`.
 
 ---
 
-## Known limitations
+## Security notes
 
-- **No authentication.** Anyone who knows a tournament id can open the moderator panel. Ids are random 8-character `nanoid` strings, which is unguessable in practice but is *not* an access control. Add auth before hosting this publicly.
+- Set a strong, unique `ADMIN_PASSWORD` for publicly hosted deployments. The local development password is kept in the ignored `.env`; rotate it before deployment.
+- Admin sessions are global across tournaments, stored server-side by token hash, and expire after 12 hours. Ten failed logins from one client address within a 15-minute window trigger a 15-minute block. Public pages and player actions remain unauthenticated.
 - **`npm run db:seed -w server` is broken.** The script points at `server/src/scripts/demo.ts`, which does not exist. Use the demo buttons on the home page instead, or `POST /api/demo`.
 - **`server/uploads/` is not git-ignored.** Deleting a tournament or removing an image does clean the file from disk, but the directory itself is not excluded, so uploaded images will show up as untracked files. Add it to `.gitignore` before committing user uploads.
 - **CORS is fully open** (`app.use(cors())`), which is appropriate for local use but should be restricted for a public deployment.

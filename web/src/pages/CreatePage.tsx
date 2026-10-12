@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatForSize } from '@gt/shared';
 import { api } from '../lib/api';
+import { useAdminAuth } from '../main';
 
 interface ParticipantRow {
   name: string;
@@ -15,9 +16,9 @@ const fmtSize = (n: number) => `${n} Teilnehmer`;
 
 export default function CreatePage() {
   const navigate = useNavigate();
+  const { status } = useAdminAuth();
   const [step, setStep] = useState(1);
   const [name, setName] = useState('GeoGuessr Turnier #1');
-  const [adminPassword, setAdminPassword] = useState('');
   const [size, setSize] = useState(8);
   const [rows, setRows] = useState<ParticipantRow[]>(() =>
     Array.from({ length: 8 }, (_, i) => ({ name: '', country: '', abbreviation: '' })),
@@ -87,7 +88,6 @@ export default function CreatePage() {
       const body = {
         name: name.trim(),
         participantCount: size,
-        adminPassword,
         participants,
         teams: needsTeams
           ? teams.map((t, i) => ({
@@ -104,6 +104,9 @@ export default function CreatePage() {
       setBusy(false);
     }
   };
+
+  if (status === 'checking') return <main className="mx-auto max-w-xl px-4 py-10 text-center text-slate-400">Admin-Status wird geprüft…</main>;
+  if (status !== 'authenticated') return <main className="mx-auto max-w-xl px-4 py-10"><section className="card"><h1 className="mb-2 text-xl font-bold">Admin-Anmeldung erforderlich</h1><p className="text-sm text-slate-400">Melde dich über „Admin-Login“ im oberen Menü an, um Turniere zu erstellen.</p><button className="btn-ghost mt-3" onClick={() => navigate('/')}>Zur Startseite</button></section></main>;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -136,12 +139,7 @@ export default function CreatePage() {
             <label className="label">Turniername</label>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="GeoGuessr Turnier #3" />
           </div>
-          <div>
-            <label className="label" htmlFor="admin-password">Admin-Passwort (mindestens 10 Zeichen)</label>
-            <input id="admin-password" className="input" type="password" autoComplete="new-password" minLength={10} maxLength={256} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-            <p className="mt-1 text-xs text-slate-500">Wird sicher gehasht gespeichert. Für Admin-Anmeldung später nötig.</p>
-          </div>
-          <button className="btn-primary" disabled={!name.trim() || adminPassword.length < 10} onClick={() => setStep(2)}>
+          <button className="btn-primary" disabled={!name.trim()} onClick={() => setStep(2)}>
             Weiter: Teilnehmer
           </button>
         </div>

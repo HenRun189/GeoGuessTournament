@@ -29,7 +29,6 @@ export interface TeamInput {
 export interface CreateTournamentInput {
   name: string;
   participantCount: number; // 4..12
-  adminPassword: string;
   participants: ParticipantInput[];
   teams?: TeamInput[] | null; // required for sizes 8, 10, 12
 }

@@ -2,6 +2,7 @@
 
 process.env.DATABASE_URL = 'file:./test.db';
 process.env.PORT = '0';
+process.env.ADMIN_PASSWORD = 'global-test-admin-password';
 
 import { execSync } from 'node:child_process';
 import { existsSync, unlinkSync } from 'node:fs';

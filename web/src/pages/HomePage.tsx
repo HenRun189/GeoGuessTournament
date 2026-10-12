@@ -1,16 +1,16 @@
 // Home: tournament list, demo mode, create-new entry point.
 
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { TournamentSummaryDTO } from '@gt/shared';
 import { api } from '../lib/api';
+import { useAdminAuth } from '../main';
 
 export default function HomePage() {
   const [tournaments, setTournaments] = useState<TournamentSummaryDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [demoPassword, setDemoPassword] = useState('');
-  const navigate = useNavigate();
+  const { status } = useAdminAuth();
 
   const load = () => {
     api
@@ -25,9 +25,8 @@ export default function HomePage() {
     setBusy(true);
     setError(null);
     try {
-      const { id } = await api.createDemo(kind, demoPassword);
-      setDemoPassword('');
-      navigate(`/admin/${id}`);
+      await api.createDemo(kind);
+      load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Demoeinstellung fehlgeschlagen');
     } finally {
@@ -47,16 +46,6 @@ export default function HomePage() {
     }
   };
 
-  const deleteOneDemo = async (id: string) => {
-    setBusy(true);
-    try {
-      await api.deleteTournament(id);
-      setTournaments((rows) => rows.filter((row) => row.id !== id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen');
-    } finally { setBusy(false); }
-  };
-
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
       <div className="mb-8 flex items-end justify-between">
@@ -67,32 +56,28 @@ export default function HomePage() {
           <p className="text-sm text-slate-400">Host, führe Turniere durch und stream — Alpha/Beta</p>
           <Link to="/rules" className="mt-2 inline-block text-xs font-semibold text-emerald-300 underline">Regeln & Ablauf</Link>
         </div>
-        <Link to="/create" className="btn-primary">
-          + Neues Turnier
-        </Link>
+        {status === 'authenticated' && <Link to="/create" className="btn-primary">+ Neues Turnier</Link>}
       </div>
 
-      <div className="card mb-6">
+      {status === 'authenticated' && <div className="card mb-6">
         <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Demomodus</div>
-        <label className="label" htmlFor="demo-admin-password">Admin-Passwort für das Demo-Turnier (mindestens 10 Zeichen)</label>
-        <input id="demo-admin-password" className="input mb-3 max-w-md" type="password" autoComplete="new-password" value={demoPassword} onChange={(event) => setDemoPassword(event.target.value)} />
         <div className="flex flex-wrap gap-2">
           <button
-            disabled={busy || demoPassword.length < 10}
+            disabled={busy}
             onClick={() => void createDemo('full')}
             className="btn-secondary"
           >
             Demo erstellen (7 Spieler, fertig)
           </button>
           <button
-            disabled={busy || demoPassword.length < 10}
+            disabled={busy}
             onClick={() => void createDemo('team')}
             className="btn-secondary"
           >
             Demo erstellen (8 → 4 Teams, fertig)
           </button>
           <button
-            disabled={busy || demoPassword.length < 10}
+            disabled={busy}
             onClick={() => void createDemo('groups')}
             className="btn-secondary"
           >
@@ -100,24 +85,13 @@ export default function HomePage() {
           </button>
           <button
             disabled={busy}
-            onClick={async () => {
-              const demos = tournaments.filter((tournament) => tournament.isDemo);
-              if (!demos.length) return;
-              try {
-                for (const tournament of demos) {
-                  const password = window.prompt(`Admin-Passwort für „${tournament.name}“`);
-                  if (!password) return;
-                  await api.loginAdmin(tournament.id, password);
-                }
-                await deleteDemo();
-              } catch (e) { setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen'); }
-            }}
+            onClick={() => void deleteDemo()}
             className="btn-danger"
           >
             Alle Demo-Turniere löschen
           </button>
         </div>
-      </div>
+      </div>}
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-500/15 px-4 py-3 text-sm text-red-400">
@@ -150,22 +124,18 @@ export default function HomePage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Link to={`/admin/${t.id}`} className="btn-secondary">
-                Admin
-              </Link>
+              {status === 'authenticated' && <Link to={`/admin/${t.id}`} className="btn-secondary">Admin</Link>}
               <Link to={`/tournament/${t.id}`} className="btn-ghost">
                 Öffentliche Seite
               </Link>
               <Link to={`/overlay/${t.id}`} className="btn-ghost">
                 Overlay
               </Link>
-              <button className="btn-danger" disabled={busy} onClick={async () => {
-                if (!window.confirm(`Admin-Passwort für „${t.name}“ eingeben, um dieses Turnier zu löschen?`)) return;
-                const password = window.prompt('Admin-Passwort');
-                if (!password) return;
-                try { await api.loginAdmin(t.id, password); await api.deleteTournament(t.id); setTournaments((rows) => rows.filter((row) => row.id !== t.id)); }
+              {status === 'authenticated' && <button className="btn-danger" disabled={busy} onClick={async () => {
+                if (!window.confirm(`Turnier „${t.name}“ wirklich löschen?`)) return;
+                try { await api.deleteTournament(t.id); setTournaments((rows) => rows.filter((row) => row.id !== t.id)); }
                 catch (e) { setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen'); }
-              }}>Löschen</button>
+              }}>Löschen</button>}
             </div>
           </div>
         ))}

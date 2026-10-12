@@ -6,7 +6,7 @@ import { prisma } from '../src/services/db.js';
 import { createTournament, saveResult, editResult, undoLastResult, setTournamentState, resetTournament, setCurrentMatch, sendManualPing, setReadiness, reportProblem, resolveProblem, uploadParticipantImage, removeParticipantImage, updatePresentationDecks, selectPresentationDeck, navigatePresentation, setPresentationActive, uploadPresentationVideo,  setPresentationVideoActive, deleteTournament } from '../src/services/mutations.js';
 import { addClient, broadcast } from '../src/services/db.js';
 import { consumeActivationOnce } from '@gt/shared';
-import { hashAdminPassword, verifyAdminPassword, createAdminSession, isAdminSessionValid } from '../src/services/auth.js';
+import { createAdminSession, isAdminSessionValid } from '../src/services/auth.js';
 import { withdrawProblem, updateOverlaySettings } from '../src/services/mutations.js';
 import { playerRulesReturnPath, selectOverlayRotationView } from '@gt/shared';
 import { getTournamentState } from '../src/services/state.js';
@@ -95,9 +95,9 @@ describe('tournament lifecycle across all sizes', () => {
       let args: Parameters<typeof createTournament>[0];
       if (team) {
         const { participants, teams } = teamSetup(size);
-        args = { name: `T${size}`, participantCount: size, participants, teams, adminPassword: 'format-password-123' };
+        args = { name: `T${size}`, participantCount: size, participants, teams };
       } else {
-        args = { name: `T${size}`, participantCount: size, participants: individualParticipants(size), adminPassword: 'format-password-123' };
+        args = { name: `T${size}`, participantCount: size, participants: individualParticipants(size) };
       }
       const id = await createTournament(args);
       created.push(id);
@@ -162,7 +162,7 @@ describe('tournament lifecycle across all sizes', () => {
   }
 
   it('rejects invalid results', async () => {
-    const id = await createTournament({ name: 'Err', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Err', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const state = await getTournamentState(id);
@@ -186,7 +186,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('undo restores previous match state', async () => {
-    const id = await createTournament({ name: 'Undo', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Undo', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const state = await getTournamentState(id);
@@ -210,7 +210,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('state and player APIs use the interleaved engine schedule for groups', async () => {
-    const id = await createTournament({ name: 'Groups order', participantCount: 6, participants: individualParticipants(6), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Groups order', participantCount: 6, participants: individualParticipants(6) });
     created.push(id);
     const state = await getTournamentState(id);
     const preliminaries = state.matches.filter((match) => match.stage === 'PRELIMINARY');
@@ -223,7 +223,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('manual ping broadcasts a unique notification without changing tournament state', async () => {
-    const id = await createTournament({ name: 'Manual ping', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Manual ping', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     const before = await getTournamentState(id);
     const unitId = before.units[0].id;
@@ -255,7 +255,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('activates and pings only the selected match units, then promotes the next scheduled match', async () => {
-    const id = await createTournament({ name: 'Auto advance', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Auto advance', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const initial = await getTournamentState(id);
@@ -291,7 +291,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('readiness is match-scoped, live, and does not alter tournament state', async () => {
-    const id = await createTournament({ name: 'Readiness', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Readiness', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const before = await getTournamentState(id);
@@ -327,7 +327,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('admin presentation decks are configurable, navigate live, and never change tournament progression', async () => {
-    const id = await createTournament({ name: 'Presentation controls', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Presentation controls', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const initial = await getTournamentState(id);
@@ -382,7 +382,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('uploads and toggles a bounded shared MP4 without changing presentation or tournament progression', async () => {
-    const id = await createTournament({ name: 'Shared video', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Shared video', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const initial = await getTournamentState(id);
@@ -418,7 +418,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('automatically publishes a timed result screen after saving a result', async () => {
-    const id = await createTournament({ name: 'Result screen', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Result screen', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const before = await getTournamentState(id);
@@ -441,7 +441,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('withdraws only the unresolved problem request using its private capability token', async () => {
-    const id = await createTournament({ name: 'Withdraw help', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Withdraw help', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     const unitId = (await getTournamentState(id)).units[0].id;
     const { withdrawalToken } = await reportProblem(id, unitId, 'Bitte Hilfe');
@@ -454,7 +454,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('problem reports are bounded, live, and can be resolved by the admin', async () => {
-    const id = await createTournament({ name: 'Help', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Help', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const state = await getTournamentState(id);
@@ -469,9 +469,9 @@ describe('tournament lifecycle across all sizes', () => {
       let current = await getTournamentState(id);
       expect(current.units.find((unit) => unit.id === unitId)?.problemReport).toMatchObject({ message: 'Ich kann das GeoGuessr-Spiel nicht öffnen.', resolved: false });
       expect(events.some((event) => event.type === 'state' && event.state?.units.find((unit) => unit.id === unitId)?.problemReport?.message.includes('nicht öffnen'))).toBe(true);
-      const session = await createAdminSession(id, 'test-password-123');
+      const session = await createAdminSession('global-test-admin-password', 'unit-session-test');
       expect(session.token).toHaveLength(64);
-      expect(await isAdminSessionValid(id, session.token)).toBe(true);
+      expect(await isAdminSessionValid(session.token)).toBe(true);
       await resolveProblem(id, unitId);
       current = await getTournamentState(id);
       expect(current.units.find((unit) => unit.id === unitId)?.problemReport?.resolved).toBe(true);
@@ -479,21 +479,18 @@ describe('tournament lifecycle across all sizes', () => {
     } finally { remove(); }
   });
 
-  it('hashes admin passwords and persists revocable, tournament-scoped sessions', async () => {
-    const id = await createTournament({ name: 'Auth', participantCount: 4, participants: individualParticipants(4), adminPassword: 'private-admin-123' });
+  it('persists a global admin session independently from tournament identity', async () => {
+    const id = await createTournament({ name: 'Auth', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
-    const stored = await prisma.tournament.findUnique({ where: { id }, select: { adminPasswordHash: true } });
-    expect(stored?.adminPasswordHash).not.toContain('private-admin-123');
-    expect(await verifyAdminPassword('private-admin-123', stored?.adminPasswordHash ?? null)).toBe(true);
-    expect(await verifyAdminPassword('wrong-password', stored?.adminPasswordHash ?? null)).toBe(false);
-    const session = await createAdminSession(id, 'private-admin-123');
-    expect(await isAdminSessionValid(id, session.token)).toBe(true);
-    expect(await isAdminSessionValid('another-tournament', session.token)).toBe(false);
+    const session = await createAdminSession('global-test-admin-password', 'lifecycle-test');
+    expect(session.token).toHaveLength(64);
+    expect(await isAdminSessionValid(session.token)).toBe(true);
+    expect(await isAdminSessionValid(undefined)).toBe(false);
     expect(playerRulesReturnPath('tournament', 'unit')).toBe('/player/tournament/unit');
   });
 
   it('persists selectable overlay rotation and rejects empty selections/invalid intervals', async () => {
-    const id = await createTournament({ name: 'Rotation', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Rotation', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await updateOverlaySettings(id, { rotationViews: ['all_matches', 'presentation'], rotationIntervalSec: 15 });
     const settings = (await getTournamentState(id)).settings;
@@ -505,7 +502,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('result values are dealt damage and mirror to the opponent as taken damage', async () => {
-    const id = await createTournament({ name: 'Damage semantics', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Damage semantics', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const match = (await getTournamentState(id)).matches[0];
@@ -519,7 +516,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('correcting a preliminary result rebuilds knockouts and recalculates the rankings', async () => {
-    const id = await createTournament({ name: 'Edit prelim', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Edit prelim', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     let state = await playAll(id);
     const match = state.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;
@@ -543,7 +540,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('correcting semifinals rebuilds final, and correcting a finished final changes the champion', async () => {
-    const id = await createTournament({ name: 'Edit knockout', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Edit knockout', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     let state = await playAll(id);
     const semifinal = state.matches.find((candidate) => candidate.stage === 'SEMIFINALS')!;
@@ -567,7 +564,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('manual activation selects any valid upcoming match and rejects unresolved matches', async () => {
-    const id = await createTournament({ name: 'Manual activation', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Manual activation', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     let state = await getTournamentState(id);
@@ -580,7 +577,7 @@ describe('tournament lifecycle across all sizes', () => {
     expect(state.currentMatchId).toBe(later.id);
     expect(state.matches.find((match) => match.id === first.id)?.status).toBe('waiting');
     expect(state.matches.find((match) => match.id === later.id)?.status).toBe('live');
-    const knockoutOnly = await createTournament({ name: 'Manual semifinal', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const knockoutOnly = await createTournament({ name: 'Manual semifinal', participantCount: 4, participants: individualParticipants(4) });
     created.push(knockoutOnly);
     const knockoutState = await playAllPreliminaries(knockoutOnly);
     const validSemifinal = knockoutState.matches.find((match) => match.stage === 'SEMIFINALS')!;
@@ -591,7 +588,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('profile images validate file signatures and update member image URLs', async () => {
-    const id = await createTournament({ name: 'Player images', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Player images', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     const before = await getTournamentState(id);
     const participantId = before.units[0].members[0].id;
@@ -610,7 +607,7 @@ describe('tournament lifecycle across all sizes', () => {
   });
 
   it('reset regenerates schedule and clears results', async () => {
-    const id = await createTournament({ name: 'Reset', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Reset', participantCount: 4, participants: individualParticipants(4) });
     created.push(id);
     await setTournamentState(id, 'PRELIMINARY');
     const state = await getTournamentState(id);
@@ -626,20 +623,19 @@ describe('tournament lifecycle across all sizes', () => {
 
   it('team creation requires explicit pairing (no auto-teams)', async () => {
     await expect(
-      createTournament({ name: 'NoTeams', participantCount: 8, participants: individualParticipants(8), adminPassword: 'test-password-123' }),
+      createTournament({ name: 'NoTeams', participantCount: 8, participants: individualParticipants(8) }),
     ).rejects.toThrow(/requires 2-player teams/i);
     created.push('none');
   });
 
   it('rejects unsupported sizes and duplicate names', async () => {
     await expect(
-      createTournament({ name: 'Bad', participantCount: 3, participants: individualParticipants(3), adminPassword: 'test-password-123' }),
+      createTournament({ name: 'Bad', participantCount: 3, participants: individualParticipants(3) }),
     ).rejects.toThrow(/4-12/);
     await expect(
       createTournament({
         name: 'Dup',
         participantCount: 4,
-        adminPassword: 'test-password-123',
         participants: [{ name: 'A' }, { name: 'a' }, { name: 'B' }, { name: 'C' }],
       }),
     ).rejects.toThrow(/unique/i);
@@ -647,7 +643,7 @@ describe('tournament lifecycle across all sizes', () => {
 
   it('deleteTournament removes all related data, including an active current-match reference', async () => {
     const { deleteTournament } = await import('../src/services/mutations.js');
-    const id = await createTournament({ name: 'Del', participantCount: 4, participants: individualParticipants(4), adminPassword: 'test-password-123' });
+    const id = await createTournament({ name: 'Del', participantCount: 4, participants: individualParticipants(4) });
     await setTournamentState(id, 'PRELIMINARY');
     const state = await getTournamentState(id);
     const match = state.matches.find((candidate) => candidate.stage === 'PRELIMINARY')!;

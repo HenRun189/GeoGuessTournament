@@ -8,20 +8,20 @@ import { ServiceError } from './services/state.js';
 import { api } from './routes/api.js';
 import { isAdminSessionValid } from './services/auth.js';
 
+function adminTokenFromRequest(req: express.Request): string | undefined {
+  const entry = (req.header('cookie')?.split(';') ?? []).map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith('gt_admin='));
+  if (!entry) return undefined;
+  try { return decodeURIComponent(entry.slice('gt_admin='.length)); } catch { return undefined; }
+}
+
 export function createApp() {
   const app = express();
   app.use(cors());
   // Authorize MP4 uploads before buffering the potentially large request body.
   app.use('/api/tournaments/:id/presentation/video', (req, res, next) => {
     if (req.method !== 'POST') { next(); return; }
-    const tournamentId = String(req.params.id ?? '');
     const bearer = req.header('authorization')?.replace(/^Bearer\s+/i, '');
-    const cookiePrefix = `gt_admin_${tournamentId}=`;
-    const cookie = (req.header('cookie')?.split(';') ?? []).map((item) => item.trim()).find((item) => item.startsWith(cookiePrefix));
-    let token: string | undefined;
-    try { token = bearer ?? (cookie ? decodeURIComponent(cookie.slice(cookiePrefix.length)) : undefined); }
-    catch { res.status(401).json({ error: 'Admin-Anmeldung erforderlich' }); return; }
-    void isAdminSessionValid(tournamentId, token).then((valid) => {
+    void isAdminSessionValid(bearer ?? adminTokenFromRequest(req)).then((valid) => {
       if (!valid) { res.status(401).json({ error: 'Admin-Anmeldung erforderlich' }); return; }
       next();
     }).catch(next);
